@@ -296,3 +296,38 @@ one-off fix.
   internally). Regression-tested in `test/fastify-adapter.test.ts` by
   registering the plugin once and declaring routes as real siblings
   afterward — the shape that silently failed before the fix.
+
+### 2026-08-10 — a chokidar watcher's initial attach is async even though `watch()` returns sync; a mutation right after creation can be missed, not just delayed
+- **Role:** tech-lead (v0.5 bug report, post-release)
+- **What happened:** the package owner ran `npm run verify` on a real
+  Windows machine and got a failure in `test/local-json-adapter-watch.
+  test.ts`'s "hand-deleted role file" test — never seen in this sandbox,
+  since all v0.5 QA ran on Linux. `chokidarWatch(dir, opts)` returns a
+  watcher object synchronously, but the underlying OS-level attach
+  (`ReadDirectoryChangesW` on Windows, `inotify` on Linux) happens in the
+  background; a file mutation fired immediately after watcher creation can
+  land inside that attach window and never be observed at all — not
+  merely arrive late. The file's own `watch()`-based tests already
+  encoded a 100ms warm-up delay for this exact reason (see their existing
+  comment), but the two tests that create a watcher implicitly (via
+  `loadRole()`, not an explicit `watch()` call) didn't get the same
+  treatment, and the gap only showed up on Windows's slower/different
+  attach path, not Linux's.
+- **Rule going forward:** any test that creates a fresh chokidar watcher —
+  whether via an explicit `watch()` call or implicitly via a cache-warming
+  read — needs a short warm-up delay before the *first* filesystem
+  mutation that test depends on the watcher observing, not just before
+  asserting on the result. Don't assume a pattern already applied to one
+  code path (explicit `watch()`) automatically covers a structurally
+  different one (implicit watcher creation inside `loadRole()`) just
+  because both end up calling the same private `ensureWatcher()`. Also:
+  don't trust that Linux-sandbox-only QA proves cross-platform timing
+  behavior for anything backed by a real OS filesystem-event API — flag
+  file-watcher/timing-sensitive features as sandbox-unverified-on-Windows
+  in the story/task when there's no way to test on the target platform
+  directly.
+- **Status:** resolved — `WATCHER_WARMUP_MS` (100ms) added before every
+  watcher-dependent mutation in `test/local-json-adapter-watch.test.ts`
+  (including the two that were missing it), `SETTLE_MS` bumped 400→600ms
+  for cross-platform margin. Verified 156/156 tests, typecheck, build,
+  both smoke tests green.

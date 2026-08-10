@@ -18,7 +18,17 @@ function makeAdapter(cache?: boolean): LocalJsonAdapter {
 // chokidar's awaitWriteFinish (stabilityThreshold: 50ms) + real fs-event
 // latency — generous but not open-ended, same order of magnitude as the
 // v0.3 rotation tests' waits.
-const SETTLE_MS = 400;
+const SETTLE_MS = 600;
+
+// chokidar's underlying watch handle attaches asynchronously (a real OS
+// call under the hood — ReadDirectoryChangesW on Windows, inotify on
+// Linux) even though `chokidarWatch()` itself returns synchronously. A
+// mutation fired immediately after the watcher is created can land inside
+// that attach window and never be seen at all (not just late) — this is
+// why every fresh-watcher test below gives it a beat before the first
+// mutation, same pattern already used for the explicit watch() tests
+// further down this file.
+const WATCHER_WARMUP_MS = 100;
 
 before(async () => {
   tmp = await mkdtemp(join(tmpdir(), 'rbac-fs-watch-'));
@@ -38,6 +48,7 @@ test('a hand-edited role file on disk is picked up without a restart (live-reloa
   const adapter = makeAdapter();
   const first = await adapter.loadRole(null, roleName);
   assert.equal(first?.permissions?.[0]?.actions[0], 'read');
+  await delay(WATCHER_WARMUP_MS); // let the watcher chokidar just created finish attaching
 
   // Edit directly on disk — NOT through adapter.saveRole().
   await writeFile(filePath, JSON.stringify({ name: roleName, permissions: [{ resource: 'x', actions: ['write'] }] }));
@@ -54,6 +65,7 @@ test('a hand-deleted role file on disk is reflected as null after the watcher no
 
   const adapter = makeAdapter();
   assert.ok(await adapter.loadRole(null, roleName));
+  await delay(WATCHER_WARMUP_MS); // let the watcher chokidar just created finish attaching
 
   await unlink(filePath); // bypass adapter.deleteRole()
   await delay(SETTLE_MS);
@@ -116,7 +128,7 @@ test('watch() delivers ChangeEvents for add/change/delete, and the returned unsu
   // have already warmed it up, unlike the other tests here) needs a beat
   // to finish its own initial setup before it reliably sees a write that
   // follows immediately — same category of timing as the rotation tests.
-  await delay(100);
+  await delay(WATCHER_WARMUP_MS);
 
   await writeFile(filePath, JSON.stringify({ name: roleName, permissions: [] }));
   await delay(SETTLE_MS);
@@ -140,7 +152,7 @@ test('watch() works even with cache: false (notification and caching are indepen
   const adapter = makeAdapter(false);
   const events: ChangeEvent[] = [];
   adapter.watch(null, (event) => events.push(event));
-  await delay(100); // let the freshly-created watcher finish its own setup — see the test above
+  await delay(WATCHER_WARMUP_MS); // let the freshly-created watcher finish its own setup — see the test above
 
   await writeFile(filePath, JSON.stringify({ name: roleName, permissions: [] }));
   await delay(SETTLE_MS);
