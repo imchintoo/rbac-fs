@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: verify (typecheck + test + build + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+
+  # docs/PLAN.md §11: prove rbac-fs actually works from plain JS (no
+  # TypeScript involved) against a packed tarball — not just against this
+  # repo's own dist/, which test/dist-smoke.mjs already covers. Catches
+  # "works in the repo but the published tarball is missing a file" bugs.
+  fixture-js-consumer:
+    name: JS-consumer-mode fixture
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack
+      - run: cp rbac-fs-*.tgz fixtures/js-consumer/rbac-fs.tgz
+      - name: install fixture deps
+        working-directory: fixtures/js-consumer
+        run: npm install ./rbac-fs.tgz --no-save
+      - name: run fixture
+        working-directory: fixtures/js-consumer
+        run: node index.mjs
+
+  # docs/PLAN.md §11: prove the shipped .d.ts files typecheck standalone,
+  # outside this repo's own tsconfig.json context.
+  fixture-ts-consumer:
+    name: TS-consumer-mode fixture
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack
+      - run: cp rbac-fs-*.tgz fixtures/ts-consumer/rbac-fs.tgz
+      - name: install fixture deps
+        working-directory: fixtures/ts-consumer
+        run: |
+          npm install --no-audit --no-fund
+          npm install ./rbac-fs.tgz --no-save
+      - name: typecheck fixture
+        working-directory: fixtures/ts-consumer
+        run: npx tsc --noEmit
+      - name: run fixture
+        working-directory: fixtures/ts-consumer
+        run: npx tsx index.ts

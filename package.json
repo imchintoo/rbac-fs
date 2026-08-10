@@ -1,0 +1,169 @@
+{
+  "name": "rbac-fs",
+  "version": "1.0.0",
+  "description": "Git-friendly, zero-database RBAC — roles and permissions as JSON files, multi-tenant by default, works in Node and the browser, in JS or TS.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js",
+      "require": "./dist/client/index.cjs"
+    },
+    "./express": {
+      "types": "./dist/adapters/express/index.d.ts",
+      "import": "./dist/adapters/express/index.js",
+      "require": "./dist/adapters/express/index.cjs"
+    },
+    "./nestjs": {
+      "types": "./dist/adapters/nestjs/index.d.ts",
+      "import": "./dist/adapters/nestjs/index.js",
+      "require": "./dist/adapters/nestjs/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/adapters/react/index.d.ts",
+      "import": "./dist/adapters/react/index.js",
+      "require": "./dist/adapters/react/index.cjs"
+    },
+    "./vue": {
+      "types": "./dist/adapters/vue/index.d.ts",
+      "import": "./dist/adapters/vue/index.js",
+      "require": "./dist/adapters/vue/index.cjs"
+    },
+    "./fastify": {
+      "types": "./dist/adapters/fastify/index.d.ts",
+      "import": "./dist/adapters/fastify/index.js",
+      "require": "./dist/adapters/fastify/index.cjs"
+    },
+    "./koa": {
+      "types": "./dist/adapters/koa/index.d.ts",
+      "import": "./dist/adapters/koa/index.js",
+      "require": "./dist/adapters/koa/index.cjs"
+    },
+    "./angular": {
+      "types": "./dist/adapters/angular/index.d.ts",
+      "import": "./dist/adapters/angular/index.js",
+      "require": "./dist/adapters/angular/index.cjs"
+    },
+    "./svelte": {
+      "types": "./dist/adapters/svelte/index.d.ts",
+      "import": "./dist/adapters/svelte/index.js",
+      "require": "./dist/adapters/svelte/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/client/index.ts src/adapters/express/index.ts src/adapters/nestjs/index.ts src/adapters/react/index.tsx src/adapters/vue/index.ts src/adapters/fastify/index.ts src/adapters/koa/index.ts src/adapters/angular/index.ts src/adapters/svelte/index.ts --format cjs,esm --dts --sourcemap --clean --target node20",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "verify": "npm run typecheck:test && npm test && npm run build && node test/dist-smoke.mjs && node test/browser-bundle-smoke.mjs"
+  },
+  "peerDependencies": {
+    "@angular/core": ">=16",
+    "@nestjs/common": ">=10",
+    "@nestjs/core": ">=10",
+    "express": ">=4",
+    "fastify": ">=4",
+    "koa": ">=2",
+    "react": ">=18",
+    "svelte": ">=4",
+    "vue": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "koa": {
+      "optional": true
+    },
+    "@angular/core": {
+      "optional": true
+    },
+    "@nestjs/common": {
+      "optional": true
+    },
+    "@nestjs/core": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "rbac",
+    "authorization",
+    "multi-tenant",
+    "permissions",
+    "roles",
+    "access-control"
+  ],
+  "author": {
+    "name": "Chintan Goswami"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imchintoo/rbac-fs.git"
+  },
+  "homepage": "https://github.com/imchintoo/rbac-fs",
+  "bugs": {
+    "url": "https://github.com/imchintoo/rbac-fs/issues"
+  },
+  "devDependencies": {
+    "@angular/core": "^22.1.1",
+    "@nestjs/common": "^10.4.0",
+    "@nestjs/core": "^10.4.0",
+    "@nestjs/testing": "^10.4.0",
+    "@types/express": "^4.17.21",
+    "@types/koa": "^3.0.3",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-test-renderer": "^18.3.0",
+    "esbuild": "^0.27.7",
+    "express": "^4.21.0",
+    "fastify": "^5.11.3",
+    "fastify-plugin": "^6.0.0",
+    "koa": "^3.2.1",
+    "react": "^18.3.0",
+    "react-test-renderer": "^18.3.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "svelte": "^5.56.8",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "rotating-file-stream": "^3.2.9"
+  }
+}

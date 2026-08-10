@@ -1,0 +1,12 @@
+{
+  "name": "rbac-fs-ts-consumer-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CI fixture (docs/PLAN.md §11): proves rbac-fs's shipped .d.ts typechecks standalone against a packed tarball, outside this repo's own tsconfig.json context. Not part of the published package.",
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0"
+  }
+}

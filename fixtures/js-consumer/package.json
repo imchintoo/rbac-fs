@@ -1,0 +1,7 @@
+{
+  "name": "rbac-fs-js-consumer-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CI fixture (docs/PLAN.md §11): proves rbac-fs works from plain JS via require()/import against a packed tarball, no TypeScript involved. Not part of the published package.",
+  "type": "module"
+}
