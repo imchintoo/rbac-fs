@@ -1,0 +1,37 @@
+{
+  "groups": [
+    {
+      "label": "Getting Started",
+      "items": [
+        { "title": "Quick Start", "slug": "quick-start", "file": "01-quick-start.md" },
+        { "title": "Core Concepts", "slug": "core-concepts", "file": "02-core-concepts.md" }
+      ]
+    },
+    {
+      "label": "API Reference",
+      "items": [
+        { "title": "API Reference", "slug": "api-reference", "file": "03-api-reference.md" }
+      ]
+    },
+    {
+      "label": "Adapters",
+      "items": [
+        { "title": "NestJS", "slug": "adapters/nestjs", "file": "04-adapters/nestjs.md" },
+        { "title": "Express", "slug": "adapters/express", "file": "04-adapters/express.md" },
+        { "title": "Fastify", "slug": "adapters/fastify", "file": "04-adapters/fastify.md" },
+        { "title": "Koa", "slug": "adapters/koa", "file": "04-adapters/koa.md" },
+        { "title": "React", "slug": "adapters/react", "file": "04-adapters/react.md" },
+        { "title": "Vue", "slug": "adapters/vue", "file": "04-adapters/vue.md" },
+        { "title": "Angular", "slug": "adapters/angular", "file": "04-adapters/angular.md" },
+        { "title": "Svelte", "slug": "adapters/svelte", "file": "04-adapters/svelte.md" }
+      ]
+    },
+    {
+      "label": "Guides",
+      "items": [
+        { "title": "Security Guardrails", "slug": "security", "file": "05-security.md" },
+        { "title": "Roadmap & CLI", "slug": "roadmap", "file": "06-roadmap.md" }
+      ]
+    }
+  ]
+}

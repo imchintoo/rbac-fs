@@ -7,6 +7,7 @@ dist/
 *.log
 .rbac/
 *.tgz
+_site/
 
 .claude
 CLAUDE.md

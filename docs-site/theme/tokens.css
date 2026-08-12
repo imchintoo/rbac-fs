@@ -1,0 +1,61 @@
+/*
+ * rbac-fs docs site — design tokens
+ * Source of truth: docs/backlog/design-spec-docs-site.md (ui-ux-designer).
+ * Every other CSS file in this theme must reference var(--*) here, never
+ * a hardcoded hex — see adr-docs-site.md §6 (light theme is an
+ * architecture-level constraint, no dark-mode toggle in v1).
+ */
+:root {
+  /* backgrounds */
+  --bg-canvas: #ffffff;
+  --bg-surface: #f8fafc;
+  --bg-surface-alt: #f1f5f9;
+
+  /* borders */
+  --border-default: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* text */
+  --text-primary: #0f172a;
+  --text-secondary: #475569; /* body copy, ~7.5:1 on white — AAA */
+  --text-muted: #64748b; /* meta/labels/timestamps, ~4.6:1 on white — AA */
+
+  /* accent */
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-subtle: #eff6ff;
+
+  /* status (audit allow/deny, diff +/-) */
+  --status-allow: #16a34a;
+  --status-allow-subtle: #f0fdf4;
+  --status-deny: #dc2626;
+  --status-deny-subtle: #fef2f2;
+
+  /* code */
+  --code-bg: #0f172a;
+  --code-text: #e2e8f0;
+  --code-accent: #93c5fd;
+
+  /* type */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --text-display: 700 clamp(36px, 5.4vw, 56px)/1.05 var(--font-ui);
+  --text-h1: 700 clamp(28px, 4vw, 40px)/1.15 var(--font-ui);
+  --text-h2: 700 clamp(22px, 3vw, 28px)/1.2 var(--font-ui);
+  --text-h3: 600 20px/1.3 var(--font-ui);
+  --text-body-lg: 400 18px/1.55 var(--font-ui);
+  --text-body: 400 15px/1.65 var(--font-ui);
+  --text-body-sm: 400 13px/1.5 var(--font-ui);
+  --text-code: 400 14px/1.65 var(--font-mono);
+  --text-label: 500 11px/1.2 var(--font-mono);
+
+  /* layout */
+  --sidebar-w: 264px;
+  --toc-w: 280px;
+  --content-max: 800px;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-float: 0 20px 50px rgba(15, 23, 42, 0.14);
+}

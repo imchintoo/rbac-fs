@@ -72,7 +72,8 @@
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
-    "verify": "npm run typecheck:test && npm test && npm run build && node test/dist-smoke.mjs && node test/browser-bundle-smoke.mjs"
+    "verify": "npm run typecheck:test && npm test && npm run build && node test/dist-smoke.mjs && node test/browser-bundle-smoke.mjs",
+    "docs:build": "node docs-site/build.js"
   },
   "peerDependencies": {
     "@angular/core": ">=16",
