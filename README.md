@@ -114,6 +114,98 @@ await rbac.listRoles();
 await rbac.deleteRole('supervisor');
 ```
 
+## Feature-scoped permissions + composable conditions
+
+A role's permission matrix can have more than one layer: module-level grants,
+feature-level grants *within* a module, and a runtime condition scoped to one
+specific feature.
+
+### Module vs. feature — just separate resource ids
+
+`resource` is a free-form string with no built-in hierarchy — a feature is
+simply its own resource id, dot-separated by convention. Granting the module
+does **not** automatically grant its features (no wildcard rollup):
+
+```ts
+await rbac.grant('clerk', { resource: 'invoice', actions: ['view'] }); // module-level
+await rbac.grant('clerk', { resource: 'invoice.line-items', actions: ['add', 'edit'] }); // feature-level
+
+await rbac.can(clerkUser, 'invoice', 'view'); // true
+await rbac.can(clerkUser, 'invoice.line-items', 'add'); // true
+await rbac.can(clerkUser, 'invoice', 'add'); // false — module grant doesn't imply the feature
+```
+
+### Composable `condition` — AND/OR/NOT over a fixed, safe operator set
+
+A single `when: "a == b"` clause can't express "device is mobile **and**
+location is in this list" — multiple `Condition` entries on the same
+resource+action OR against each other, not AND. The `condition` tree solves
+this with `and`/`or`/`not` nodes, nestable to arbitrary depth, over a fixed
+operator vocabulary — still zero `eval()`/`Function()`, just JSON:
+
+```ts
+await rbac.createRole('mobile-approver', {
+  conditions: [
+    {
+      resource: 'invoice.line-items',
+      actions: ['approve'],
+      condition: {
+        and: [
+          { op: 'eq', path: 'device', value: 'mobile' },
+          { op: 'in', path: 'location', value: ['US', 'IN', 'EU'] },
+        ],
+      },
+    },
+  ],
+});
+
+await rbac.can(user, 'invoice.line-items', 'approve', { device: 'mobile', location: 'IN' }); // true
+await rbac.can(user, 'invoice.line-items', 'approve', { device: 'desktop', location: 'IN' }); // false
+```
+
+`path`/`valuePath` operands resolve the same way `when` always has:
+`user.<field>` reads from the user object passed to `can()`, any other bare
+path reads from `context` (`can()`'s 4th argument).
+
+**Operators:**
+
+| Operator | Leaf shape | Meaning |
+|---|---|---|
+| `eq` / `neq` | `{ op, path, value }` or `{ op, path, valuePath }` | equal / not equal (loose string comparison, same as legacy `when`) |
+| `gt` / `gte` / `lt` / `lte` | `{ op, path, value: number }` or `{ op, path, valuePath }` | numeric comparison |
+| `in` / `notIn` | `{ op, path, value: [...] }` | membership in a literal list |
+| `exists` / `notExists` | `{ op, path }` | is the resolved value defined? |
+| `contains` | `{ op, path, value }` | substring match on a string, or membership on an array |
+| `startsWith` / `endsWith` | `{ op, path, value }` | string prefix/suffix match |
+
+**`when` still works, unchanged** — a `Condition` uses exactly one of
+`when` (legacy single-clause form) or `condition` (the tree); both evaluate
+through the same evaluator, no migration needed for existing role files.
+
+### Custom operators — the escape hatch for rules the built-ins can't express
+
+For app-specific logic no fixed operator list can anticipate (geofence
+radius, business-hours windows, a scoring function), register a named
+predicate — the engine calls a real function you wrote, never anything
+parsed out of the JSON role file:
+
+```ts
+const rbac = new RBAC({
+  tenantId: 'acme-corp',
+  operators: {
+    withinRadius: ({ context, args }) => haversineKm(context.userLocation, context.siteLocation) <= (args?.km as number),
+  },
+});
+
+await rbac.createRole('field-approver', {
+  conditions: [{ resource: 'site-visit', actions: ['approve'], condition: { op: 'custom', name: 'withinRadius', args: { km: 5 } } }],
+});
+```
+
+Same option on the browser client: `new RBACClient(snapshot, { operators })`.
+Referencing an unregistered `custom` name throws
+`UnknownConditionOperatorError` — deliberately, not a silent deny.
+
 ## Browser usage
 
 The Node package (`rbac-fs`) reads/writes `.rbac/` on disk and should
@@ -155,6 +247,11 @@ permission logic; they all call straight into `RBAC.can()` /
 `RBACClient.can()`, so the same role/permission files drive every
 framework identically.
 
+See [`examples/`](./examples) for a runnable, verified-against-the-real-build
+code sample for every one of the above — core engine, dynamic roles,
+conditional grants, multi-tenancy, audit logging, live-reload, and all 8
+framework adapters.
+
 ## Security guardrails (built in, not left to you)
 
 - `tenantId`/role name sanitization against path traversal, on every call.
@@ -163,9 +260,12 @@ framework identically.
 - Reserved role names (`admin`, `system-admin`) blocked from accidental
   overwrite unless `{ force: true }`.
 - Circular inheritance detection on every `createRole`/`grant`.
-- Condition expressions (`when` clauses) use a hand-rolled equality-only
-  evaluator — no `eval()`/`Function()` — so a hand-edited role file can't
-  become a code-execution vector.
+- Condition expressions (legacy `when` clauses and the composable
+  `condition` tree — see "Feature-scoped permissions + composable
+  conditions") use a hand-rolled, fixed operator vocabulary — no
+  `eval()`/`Function()` — so a hand-edited role file can't become a
+  code-execution vector. `custom` operators call a function *you* registered
+  in your own code, never anything parsed out of the file.
 
 Who's allowed to *call* `createRole`/`grant`/etc. in the first place is
 your app's own business rule — check `rbac.can(user, 'role', 'manage')`

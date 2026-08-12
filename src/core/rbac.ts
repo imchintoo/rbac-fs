@@ -3,7 +3,7 @@
  * ever import directly. It depends purely on a StorageAdapter — it never
  * touches `fs`/`path` itself (see docs/backlog/adr-v0.1-core-engine.md).
  */
-import { evaluateCondition } from './condition.js';
+import { evaluateConditionEntry } from './condition-tree.js';
 import { assertValidIdentifier } from './identifier.js';
 import { hasUnconditionalGrant, matchingConditions, resolveRole } from './role-resolver.js';
 import { validateCreateRoleInput, validatePermission } from './schema.js';
@@ -14,6 +14,7 @@ import {
   RoleNotFoundError,
   UnsupportedOperationError,
   type AuditEntry,
+  type ConditionOperatorFn,
   type CreateRoleInput,
   type GetAuditLogOptions,
   type MutationOptions,
@@ -34,6 +35,7 @@ const RESERVED_ROLE_NAMES = new Set(['admin', 'system-admin']);
 export class RBAC {
   private readonly tenantId: string | null;
   private readonly adapter: StorageAdapter;
+  private readonly operators: Record<string, ConditionOperatorFn>;
 
   constructor(options: RBACOptions & { adapter: StorageAdapter }) {
     this.tenantId = options.tenantId ?? null;
@@ -41,6 +43,7 @@ export class RBAC {
       assertValidIdentifier('tenantId', this.tenantId);
     }
     this.adapter = options.adapter;
+    this.operators = options.operators ?? {};
   }
 
   /**
@@ -57,8 +60,9 @@ export class RBAC {
 
   /**
    * Does `user` have permission to perform `action` on `resource`?
-   * `context` is only consulted for conditional grants (`when` clauses) —
-   * see docs/PLAN.md §5.1/§7 and src/core/condition.ts.
+   * `context` is only consulted for conditional grants (legacy `when`
+   * clauses or the composable `condition` tree) — see docs/PLAN.md §5.1/§7,
+   * src/core/condition.ts, and src/core/condition-tree.ts.
    *
    * Every call is recorded to the audit log (docs/PLAN.md §5.2/§6), both
    * allow and deny outcomes — logging is best-effort and awaited but never
@@ -80,7 +84,7 @@ export class RBAC {
     let allowed = hasUnconditionalGrant(resolved, resource, action);
     if (!allowed) {
       for (const condition of matchingConditions(resolved, resource, action)) {
-        if (evaluateCondition(condition.when, user as unknown as Record<string, unknown>, context)) {
+        if (evaluateConditionEntry(condition, user as unknown as Record<string, unknown>, context, this.operators)) {
           allowed = true;
           break;
         }

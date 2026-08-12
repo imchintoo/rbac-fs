@@ -22,9 +22,14 @@ export { RBAC as CoreRBAC } from './core/rbac.js';
 export type {
   AuditEntry,
   ChangeEvent,
+  ComparisonOp,
   Condition,
+  ConditionLeaf,
+  ConditionNode,
+  ConditionOperatorFn,
   CreateRoleInput,
   GetAuditLogOptions,
+  JsonPrimitive,
   MutationOptions,
   Permission,
   RBACOptions,
@@ -45,5 +50,6 @@ export {
   RoleHasDependentsError,
   RoleNotFoundError,
   SchemaValidationError,
+  UnknownConditionOperatorError,
   UnsupportedOperationError,
 } from './core/types.js';

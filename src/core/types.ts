@@ -10,14 +10,57 @@ export interface Permission {
   actions: string[];
 }
 
+/** A JSON-representable literal — what a hand-edited role file can contain. */
+export type JsonPrimitive = string | number | boolean;
+
+/** Comparison operators available to a {@link ConditionLeaf}. */
+export type ComparisonOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'startsWith' | 'endsWith';
+
 /**
- * A conditional grant. v0.1 supports only equality comparisons in `when`
- * (see {@link ../condition.js}) — e.g. `"owner_id == user.id"`.
+ * One leaf of a {@link ConditionNode} tree — see
+ * {@link ../condition-tree.js} for the evaluator and
+ * docs/backlog/adr-feature-scoped-conditions.md for the design rationale.
+ * Exactly one of `value`/`valuePath` on a comparison leaf: `value` compares
+ * against a literal, `valuePath` compares against another resolved path
+ * (the tree-form equivalent of legacy `when`'s `"a == b.c"` path-vs-path).
+ */
+export type ConditionLeaf =
+  | { op: ComparisonOp; path: string; value: JsonPrimitive }
+  | { op: ComparisonOp; path: string; valuePath: string }
+  | { op: 'in' | 'notIn'; path: string; value: JsonPrimitive[] }
+  | { op: 'exists' | 'notExists'; path: string }
+  | { op: 'custom'; name: string; args?: Record<string, JsonPrimitive> };
+
+/**
+ * A composable condition tree — `and`/`or`/`not` nodes nest to arbitrary
+ * depth around {@link ConditionLeaf} leaves. Deliberately *not* a string
+ * expression grammar (no `eval()`/`Function()`, ever — see
+ * docs/backlog/adr-feature-scoped-conditions.md "Why 'universal' can't
+ * mean 'eval a string'").
+ */
+export type ConditionNode = ConditionLeaf | { and: ConditionNode[] } | { or: ConditionNode[] } | { not: ConditionNode };
+
+/**
+ * A custom, app-registered predicate referenced from a `{ op: 'custom' }`
+ * leaf by name — see `RBACOptions.operators`. The engine calls a real
+ * function the consumer wrote; it never executes anything parsed out of a
+ * role file.
+ */
+export type ConditionOperatorFn = (ctx: { user: RbacUser; context: Record<string, unknown>; args?: Record<string, JsonPrimitive> }) => boolean;
+
+/**
+ * A conditional grant. Exactly one of `when` (legacy single-clause form,
+ * `"<path> == <path|literal>"`, see {@link ../condition.js}) or `condition`
+ * (composable tree, see {@link ../condition-tree.js}) must be present —
+ * enforced by `schema.ts`, not by the type system (both are optional here
+ * so a partially-built object can be validated with one clear error rather
+ * than a TS union the caller has to satisfy blindly).
  */
 export interface Condition {
   resource: string;
   actions: string[];
-  when: string;
+  when?: string;
+  condition?: ConditionNode;
 }
 
 export interface RoleMeta {
@@ -159,6 +202,15 @@ export interface RBACOptions {
   adapter?: StorageAdapter;
   /** Audit log rotation config, forwarded to the default LocalJsonAdapter. Ignored if `adapter` is passed explicitly. */
   rotation?: RotationOptions;
+  /**
+   * Named predicates a `{ op: 'custom' }` condition leaf can call by name —
+   * see {@link ConditionOperatorFn}. Mirrored on `RBACClient`'s constructor
+   * for the browser build (same functions, no fs/eval concern either side).
+   * Omitting this is identical to today's behavior for any role file that
+   * doesn't reference a `custom` leaf; referencing one with no matching
+   * registered function throws `UnknownConditionOperatorError`.
+   */
+  operators?: Record<string, ConditionOperatorFn>;
 }
 
 export class RbacError extends Error {
@@ -196,6 +248,13 @@ export class InvalidConditionError extends RbacError {
   constructor(when: string) {
     super(`Invalid condition expression: ${JSON.stringify(when)} — v0.1 supports "<path> == <path|literal>" only`, 'INVALID_CONDITION');
     this.name = 'InvalidConditionError';
+  }
+}
+
+export class UnknownConditionOperatorError extends RbacError {
+  constructor(name: string) {
+    super(`Unknown custom condition operator: ${JSON.stringify(name)} — no function registered under this name in RBACOptions.operators`, 'UNKNOWN_CONDITION_OPERATOR');
+    this.name = 'UnknownConditionOperatorError';
   }
 }
 

@@ -74,3 +74,91 @@ test('RBACClient uses the same evaluator as RBAC.can() for identical permission 
     assert.equal(clientResult, serverResult, `mismatch for ${resource}:${action} with context ${JSON.stringify(context)}`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Node-vs-browser agreement — the hard merge-block item from
+// docs/backlog/task-feature-scoped-conditions.md / sprint-12-scope.md.
+// `RBACClient` does NOT delegate to `RBAC.can()`; it independently imports
+// the shared `condition-tree.ts` evaluator. This test exercises two real,
+// separate code paths (CoreRBAC via a fake StorageAdapter, and RBACClient
+// against an equivalent snapshot) and asserts they agree on every case —
+// composable `and`/`or`/`not` trees AND a custom operator, not just the
+// legacy `when` form the earlier parity test above already covers.
+// ---------------------------------------------------------------------------
+
+test('Node (RBAC.can()) and browser (RBACClient.can()) agree on identical composable-condition + custom-operator fixtures', async () => {
+  const { RBAC: CoreRBAC } = await import('../src/core/rbac.js');
+
+  const permissions = [
+    { resource: 'invoice', actions: ['view'] },
+    { resource: 'invoice.line-items', actions: ['add', 'edit'] },
+  ];
+  const conditions = [
+    {
+      resource: 'invoice.line-items',
+      actions: ['approve'],
+      condition: {
+        and: [{ op: 'eq' as const, path: 'device', value: 'mobile' }, { op: 'in' as const, path: 'location', value: ['US', 'IN', 'EU'] }],
+      },
+    },
+    { resource: 'site-visit', actions: ['approve'], condition: { op: 'custom' as const, name: 'withinRadius', args: { km: 5 } } },
+  ];
+
+  const operators = {
+    withinRadius: (ctx: { context: Record<string, unknown>; args?: Record<string, unknown> }) => (ctx.context.distanceKm as number) <= (ctx.args?.km as number),
+  };
+
+  const adapter = {
+    async loadRole() {
+      return { name: 'snapshot-role', permissions, conditions };
+    },
+    async loadAllRoles() {
+      return [];
+    },
+    async saveRole() {},
+    async deleteRole() {},
+    async appendLog() {},
+  };
+  const serverSide = new CoreRBAC({ adapter, operators });
+  const client = new RBACClient({ permissions, conditions }, { operators });
+
+  const cases: Array<[string, string, Record<string, unknown>]> = [
+    ['invoice', 'view', {}],
+    ['invoice.line-items', 'add', {}],
+    ['invoice', 'add', {}], // module grant must NOT imply the feature — deny on both sides
+    ['invoice.line-items', 'approve', { device: 'mobile', location: 'IN' }],
+    ['invoice.line-items', 'approve', { device: 'desktop', location: 'IN' }],
+    ['invoice.line-items', 'approve', { device: 'mobile', location: 'CN' }],
+    ['site-visit', 'approve', { distanceKm: 3 }],
+    ['site-visit', 'approve', { distanceKm: 12 }],
+  ];
+
+  for (const [resource, action, context] of cases) {
+    const serverResult = await serverSide.can({ id: 'u1', role: 'snapshot-role' }, resource, action, context);
+    const clientResult = client.can(resource, action, context);
+    assert.equal(clientResult, serverResult, `mismatch for ${resource}:${action} with context ${JSON.stringify(context)}`);
+  }
+});
+
+test('Node and browser agree that an unregistered custom operator throws on both sides, not a silent deny', async () => {
+  const { RBAC: CoreRBAC } = await import('../src/core/rbac.js');
+  const { UnknownConditionOperatorError } = await import('../src/core/types.js');
+
+  const conditions = [{ resource: 'site-visit', actions: ['approve'], condition: { op: 'custom' as const, name: 'notRegistered' } }];
+  const adapter = {
+    async loadRole() {
+      return { name: 'snapshot-role', permissions: [], conditions };
+    },
+    async loadAllRoles() {
+      return [];
+    },
+    async saveRole() {},
+    async deleteRole() {},
+    async appendLog() {},
+  };
+  const serverSide = new CoreRBAC({ adapter }); // no operators registered
+  const client = new RBACClient({ permissions: [], conditions }); // no operators registered
+
+  await assert.rejects(() => serverSide.can({ id: 'u1', role: 'snapshot-role' }, 'site-visit', 'approve'), UnknownConditionOperatorError);
+  assert.throws(() => client.can('site-visit', 'approve'), UnknownConditionOperatorError);
+});

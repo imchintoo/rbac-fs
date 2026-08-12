@@ -5,7 +5,7 @@
  * StorageAdapter (or a plain in-memory map in tests) without change.
  */
 import { CircularInheritanceError, RoleNotFoundError, type Condition, type Permission, type RoleDefinition } from './types.js';
-import { validateCondition } from './condition.js';
+import { validateConditionField } from './condition-tree.js';
 
 export interface ResolvedRole {
   name: string;
@@ -59,7 +59,7 @@ export async function resolveRole(roleName: string, loadRole: LoadRoleFn): Promi
       permissions.push(permission);
     }
     for (const condition of role.conditions ?? []) {
-      validateCondition(condition.when);
+      validateConditionField(condition);
       conditions.push(condition);
     }
   }

@@ -4,7 +4,7 @@
  * fixed, and the core engine explicitly promises zero dependencies
  * (docs/PLAN.md §1, §2.1).
  */
-import { validateCondition } from './condition.js';
+import { validateConditionField } from './condition-tree.js';
 import { isValidIdentifier } from './identifier.js';
 import { SchemaValidationError, type Condition, type CreateRoleInput, type Permission } from './types.js';
 
@@ -35,18 +35,19 @@ export function validateConditionEntry(condition: unknown, context: string): ass
   if (typeof condition !== 'object' || condition === null) {
     throw new SchemaValidationError(`${context}: expected an object`);
   }
-  const { resource, actions, when, ...rest } = condition as Record<string, unknown>;
+  const { resource, actions, when, condition: conditionNode, ...rest } = condition as Record<string, unknown>;
   const extraKeys = Object.keys(rest);
   if (extraKeys.length > 0) {
     throw new SchemaValidationError(`${context}: unknown field(s) ${extraKeys.join(', ')}`);
   }
   validatePermission({ resource, actions }, context);
-  if (!isNonEmptyString(when)) {
-    throw new SchemaValidationError(`${context}: "when" must be a non-empty string`);
+  if (when !== undefined && typeof when !== 'string') {
+    throw new SchemaValidationError(`${context}: "when" must be a string if present`);
   }
-  // Delegates to condition.ts's own grammar check — single source of truth,
-  // not a second copy of the pattern.
-  validateCondition(when);
+  // Delegates to condition-tree.ts's shared checker (when-XOR-condition +
+  // whichever grammar applies) — single source of truth, not a second copy
+  // of the pattern, and shared with role-resolver.ts's on-disk re-check.
+  validateConditionField({ when: when as string | undefined, condition: conditionNode as Condition['condition'] });
 }
 
 /**

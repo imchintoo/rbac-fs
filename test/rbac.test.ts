@@ -88,6 +88,86 @@ test('can() evaluates conditional grants against context', async () => {
   assert.equal(await rbac.can(user, 'report', 'view', { owner_id: 'someone-else' }), false);
 });
 
+// ---------------------------------------------------------------------------
+// Feature-scoped resources + composable `condition` tree — the scenario
+// from docs/backlog/story-feature-scoped-conditions.md: module- and
+// feature-level grants as sibling `permissions` entries, plus a
+// feature-scoped condition requiring device AND location together (an AND
+// that two separate `Condition` entries could never express, since multiple
+// entries on the same resource+action OR against each other — see the ADR).
+// ---------------------------------------------------------------------------
+
+test('can() resolves module- vs feature-level grants as independent resource ids, no rollup', async () => {
+  const adapter = fakeAdapter({
+    _shared: {
+      clerk: {
+        name: 'clerk',
+        permissions: [
+          { resource: 'invoice', actions: ['view'] }, // module-level
+          { resource: 'invoice.line-items', actions: ['add', 'edit'] }, // feature-level
+        ],
+      },
+    },
+  });
+  const rbac = new CoreRBAC({ adapter });
+  const user = { id: 'u1', role: 'clerk' };
+  assert.equal(await rbac.can(user, 'invoice', 'view'), true);
+  assert.equal(await rbac.can(user, 'invoice.line-items', 'add'), true);
+  // Module grant does NOT imply the feature, and vice versa — exact-match
+  // resource matching, no wildcard rollup, per the ADR's explicit scope cut.
+  assert.equal(await rbac.can(user, 'invoice', 'add'), false);
+  assert.equal(await rbac.can(user, 'invoice.line-items', 'delete'), false);
+});
+
+test('can() evaluates a feature-scoped composable condition — device AND location, an AND two `when` entries could not express', async () => {
+  const adapter = fakeAdapter({
+    _shared: {
+      'mobile-approver': {
+        name: 'mobile-approver',
+        permissions: [],
+        conditions: [
+          {
+            resource: 'invoice.line-items',
+            actions: ['approve'],
+            condition: {
+              and: [
+                { op: 'eq', path: 'device', value: 'mobile' },
+                { op: 'in', path: 'location', value: ['US', 'IN', 'EU'] },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  });
+  const rbac = new CoreRBAC({ adapter });
+  const user = { id: 'u1', role: 'mobile-approver' };
+  assert.equal(await rbac.can(user, 'invoice.line-items', 'approve', { device: 'mobile', location: 'IN' }), true);
+  assert.equal(await rbac.can(user, 'invoice.line-items', 'approve', { device: 'desktop', location: 'IN' }), false);
+  assert.equal(await rbac.can(user, 'invoice.line-items', 'approve', { device: 'mobile', location: 'CN' }), false);
+});
+
+test('can() threads RBACOptions.operators through to a custom condition leaf', async () => {
+  const adapter = fakeAdapter({
+    _shared: {
+      'radius-approver': {
+        name: 'radius-approver',
+        permissions: [],
+        conditions: [{ resource: 'site-visit', actions: ['approve'], condition: { op: 'custom', name: 'withinRadius', args: { km: 5 } } }],
+      },
+    },
+  });
+  const rbac = new CoreRBAC({
+    adapter,
+    operators: {
+      withinRadius: ({ context, args }) => (context.distanceKm as number) <= (args?.km as number),
+    },
+  });
+  const user = { id: 'u1', role: 'radius-approver' };
+  assert.equal(await rbac.can(user, 'site-visit', 'approve', { distanceKm: 3 }), true);
+  assert.equal(await rbac.can(user, 'site-visit', 'approve', { distanceKm: 12 }), false);
+});
+
 test('constructor rejects a malicious tenantId immediately (fails fast, not on first call)', () => {
   const adapter = fakeAdapter({});
   assert.throws(() => new CoreRBAC({ tenantId: '../../etc', adapter }), InvalidIdentifierError);

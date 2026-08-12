@@ -47,9 +47,14 @@ export function validateCondition(when: string): void {
   parseCondition(when);
 }
 
-function resolveOperand(operand: Operand, user: Record<string, unknown>, context: Record<string, unknown>): unknown {
-  if (operand.kind === 'literal') return operand.value;
-  const parts = operand.path.split('.');
+/**
+ * Resolve a dotted path against `user`/`context` (the `user.<field>` vs.
+ * bare-path-into-`context` convention documented in this file's header).
+ * Exported so `condition-tree.ts` shares this exact resolution logic rather
+ * than reimplementing it — single source of truth for what a path means.
+ */
+export function resolvePath(path: string, user: Record<string, unknown>, context: Record<string, unknown>): unknown {
+  const parts = path.split('.');
   let root: unknown;
   let rest: string[];
   if (parts[0] === 'user') {
@@ -67,6 +72,11 @@ function resolveOperand(operand: Operand, user: Record<string, unknown>, context
     current = (current as Record<string, unknown>)[part];
   }
   return current;
+}
+
+function resolveOperand(operand: Operand, user: Record<string, unknown>, context: Record<string, unknown>): unknown {
+  if (operand.kind === 'literal') return operand.value;
+  return resolvePath(operand.path, user, context);
 }
 
 /**
