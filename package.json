@@ -1,6 +1,6 @@
 {
   "name": "rbac-fs",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Git-friendly, zero-database RBAC — roles and permissions as JSON files, multi-tenant by default, works in Node and the browser, in JS or TS.",
   "type": "module",
   "main": "./dist/index.cjs",
