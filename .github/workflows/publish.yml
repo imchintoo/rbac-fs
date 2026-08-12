@@ -1,13 +1,16 @@
-name: Publish
+name: Publish (manual fallback)
 
-# Triggers on a GitHub Release being published, not on every push to main
-# — publishing is a deliberate, separate action from merging (docs/
-# PLAN.md §11, docs/backlog/story-v1.0-release-prep.md's explicit
-# deferral of actually running this workflow until the package owner
-# creates a release).
+# SUPERSEDED as the normal publish path by .github/workflows/release.yml
+# (docs/backlog/adr-v1.1-changesets-publish.md) — Changesets now owns
+# publish-on-merge-to-main. This workflow is kept only as a manual
+# break-glass path (e.g. a version got published outside Changesets and
+# needs a manual re-run) and deliberately no longer has an automatic
+# trigger, so it can never race/double-publish against release.yml.
+#
+# Run it from the Actions tab ("Run workflow") only if you specifically
+# need to publish the current package.json version by hand.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read

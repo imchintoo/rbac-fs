@@ -8,6 +8,9 @@ dist/
 .rbac/
 *.tgz
 _site/
+api-docs/
+coverage-badge.svg
+coverage-summary.json
 
 .claude
 CLAUDE.md

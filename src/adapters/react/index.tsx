@@ -12,6 +12,7 @@ import type { RBACClient } from '../../client/index.js';
 
 const RbacContext = createContext<RBACClient | null>(null);
 
+/** Props for {@link RbacProvider}. */
 export interface RbacProviderProps {
   client: RBACClient;
   children?: ReactNode;
@@ -37,6 +38,7 @@ export function usePermission(): RBACClient['can'] {
   return client.can.bind(client);
 }
 
+/** Props for {@link Can} — `<Can I="approve" a="invoice">...</Can>` (CASL-style naming, docs/PLAN.md §7). */
 export interface CanProps {
   /** Action — matches `docs/PLAN.md`'s `<Can I="approve" a="invoice">` (CASL-style) naming. */
   I: string;

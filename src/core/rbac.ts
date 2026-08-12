@@ -32,11 +32,25 @@ import {
  */
 const RESERVED_ROLE_NAMES = new Set(['admin', 'system-admin']);
 
+/**
+ * Adapter-agnostic Core Engine. Requires an explicit `adapter` — most
+ * consumers should import `RBAC` from `src/index.ts` instead, which wires a
+ * default `LocalJsonAdapter` for you (Layer 2 vs. Layer 1, docs/PLAN.md §3).
+ * Use this class directly only when injecting a custom `StorageAdapter` or
+ * writing storage-agnostic tests.
+ *
+ * @example
+ * ```ts
+ * const rbac = new RBAC({ tenantId: 'acme', adapter: myAdapter });
+ * await rbac.can({ id: 'u1', role: 'editor' }, 'invoice', 'approve');
+ * ```
+ */
 export class RBAC {
   private readonly tenantId: string | null;
   private readonly adapter: StorageAdapter;
   private readonly operators: Record<string, ConditionOperatorFn>;
 
+  /** @param options Must include `adapter`; see `RBACOptions` for the rest. */
   constructor(options: RBACOptions & { adapter: StorageAdapter }) {
     this.tenantId = options.tenantId ?? null;
     if (this.tenantId !== null) {
@@ -129,6 +143,21 @@ export class RBAC {
   }
 
   /**
+   * Throws `RoleNotFoundError` for the first entry in `inherits` that isn't
+   * an existing role — `name` itself is skipped (self-reference; the cycle
+   * check in `createRole` reports that case properly instead).
+   */
+  private async assertParentsExist(name: string, inherits: string[]): Promise<void> {
+    for (const parent of inherits) {
+      if (parent === name) continue;
+      const parentRole = await this.adapter.loadRole(this.tenantId, parent);
+      if (!parentRole) {
+        throw new RoleNotFoundError(parent);
+      }
+    }
+  }
+
+  /**
    * Create a new role. Validates shape (schema.ts), rejects reserved names
    * and existing roles unless `force`, rejects missing `inherits` parents,
    * and rejects anything that would make the role graph cycle — before
@@ -147,13 +176,7 @@ export class RBAC {
       throw new RoleAlreadyExistsError(name);
     }
 
-    for (const parent of input.inherits ?? []) {
-      if (parent === name) continue; // self-reference — the cycle check below reports this properly
-      const parentRole = await this.adapter.loadRole(this.tenantId, parent);
-      if (!parentRole) {
-        throw new RoleNotFoundError(parent);
-      }
-    }
+    await this.assertParentsExist(name, input.inherits ?? []);
 
     const now = new Date().toISOString();
     const role: RoleDefinition = {

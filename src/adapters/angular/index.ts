@@ -37,6 +37,7 @@ export function provideRbacClient(client: RBACClient): Provider {
 export class RbacService {
   constructor(@Inject(RBAC_CLIENT) private readonly client: RBACClient) {}
 
+  /** Delegates directly to the injected `RBACClient.can()` — see that method's doc. */
   can(resource: string, action: string, context?: Record<string, unknown>): boolean {
     return this.client.can(resource, action, context);
   }
@@ -69,6 +70,7 @@ export class RbacCanDirective implements OnChanges {
     private readonly rbac: RbacService,
   ) {}
 
+  /** Re-evaluates the permission and mounts/unmounts the embedded view accordingly; see the class doc. */
   ngOnChanges(): void {
     const allowed = this.rbac.can(this.rbacCan, this.rbacCanAction, this.rbacCanContext);
     if (allowed && !this.hasView) {

@@ -28,6 +28,7 @@ export interface PermissionStore {
   subscribe(run: (can: RBACClient['can']) => void): () => void;
 }
 
+/** Builds a {@link PermissionStore} bound to `client` — see the interface doc for usage. */
 export function createPermissionStore(client: RBACClient): PermissionStore {
   const boundCan = client.can.bind(client);
   return {
@@ -38,6 +39,7 @@ export function createPermissionStore(client: RBACClient): PermissionStore {
   };
 }
 
+/** Params for the `use:can` action built by {@link createCanAction}. */
 export interface CanActionParams {
   /** Resource — matches `rbac-fs/react`'s `<Can a="...">` / `rbac-fs/vue`'s `v-can` naming. */
   a: string;

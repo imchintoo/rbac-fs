@@ -25,6 +25,7 @@ export interface RbacLike {
 /** A static resource/action name, or a function deriving one from the request (e.g. from `req.params`). */
 export type RequestDerived<T> = T | ((req: Request) => T);
 
+/** Options accepted by {@link rbacMiddleware}. */
 export interface RbacMiddlewareOptions {
   /** Extract the acting user from the request. Default: `req.user`. Never assume a specific auth middleware populated it. */
   getUser?: (req: Request) => RbacUser | undefined;

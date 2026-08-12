@@ -1,0 +1,61 @@
+name: Release
+
+# docs/PLAN.md §11's original spec ("Changesets for automated version bump
+# + changelog + publish on merge to main") + docs/backlog/adr-v1.1-changesets-publish.md
+# — supersedes the release-triggered publish.yml from the v1.0 story.
+#
+# Every push to main runs changesets/action, which does exactly one of:
+#   - pending changeset files exist  -> open/update a "Version Packages" PR
+#     (this is the "package owner's explicit action" gate: nothing
+#     publishes until a human merges that PR)
+#   - the "Version Packages" PR was just merged (version bumped, no
+#     pending changesets left) -> run `npm run release`, which builds and
+#     `npm publish`es the new version with npm Trusted Publishing (OIDC —
+#     see `id-token: write` below; no NPM_TOKEN secret involved)
+on:
+  push:
+    branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write # changesets/action pushes the Version Packages branch + tags the release
+  pull-requests: write # changesets/action opens/updates the Version Packages PR
+  id-token: write # npm Trusted Publishing (OIDC) during `npm publish --provenance`
+
+jobs:
+  release:
+    name: version or publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changesets needs full history to diff against the last release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      # Trusted Publishing (OIDC token exchange during `npm publish`)
+      # requires a recent npm CLI — pin explicitly, matching the old
+      # publish.yml's reasoning.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      # Same gate CI already enforces on every push/PR — re-run here too
+      # so a Version Packages PR can't merge (and therefore can't publish)
+      # without passing typecheck/tests/build/smoke/docs-drift.
+      - run: npm run verify
+
+      - name: Create Version Packages PR, or publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npm run version-packages
+          publish: npm run release
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

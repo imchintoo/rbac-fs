@@ -28,6 +28,11 @@ function toOperand(pathToken: string): Operand {
   return { kind: 'path', path: pathToken };
 }
 
+/**
+ * Parse a legacy `"<path> == <path|literal>"` condition string into its
+ * left/right operands. Throws `InvalidConditionError` if `when` doesn't
+ * match the single supported grammar (see this file's header comment).
+ */
 export function parseCondition(when: string): ParsedCondition {
   const match = CONDITION_PATTERN.exec(when.trim());
   if (!match) {

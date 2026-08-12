@@ -8,8 +8,10 @@
 import { inject, type App, type InjectionKey, type ObjectDirective, type Plugin } from 'vue';
 import type { RBACClient } from '../../client/index.js';
 
+/** DI token a consumer's `RBACClient` is provided under — see `createRbacPlugin`. */
 export const RBAC_CLIENT_KEY: InjectionKey<RBACClient> = Symbol('rbac-fs client');
 
+/** `v-can` binding value shape — `v-can="{ a: 'invoice', I: 'approve' }"`. */
 export interface CanDirectiveBinding {
   /** Resource — matches `rbac-fs/react`'s `<Can a="...">` naming for a consistent mental model across frameworks. */
   a: string;

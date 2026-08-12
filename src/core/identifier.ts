@@ -8,6 +8,11 @@ import { InvalidIdentifierError } from './types.js';
 
 const IDENTIFIER_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
+/**
+ * Non-throwing check: does `value` match `^[a-zA-Z0-9_-]+$`? Use
+ * {@link assertValidIdentifier} instead when you want the standard
+ * `InvalidIdentifierError` on failure rather than a boolean.
+ */
 export function isValidIdentifier(value: string): boolean {
   return IDENTIFIER_PATTERN.test(value);
 }

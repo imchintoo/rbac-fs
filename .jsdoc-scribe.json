@@ -1,0 +1,7 @@
+{
+  "out": "api-docs",
+  "title": "rbac-fs API Reference",
+  "readme": true,
+  "sourceUrl": "https://github.com/imchintoo/rbac-fs/blob/main",
+  "ignore": ["**/*.test.ts", "src/**/*.test.ts"]
+}

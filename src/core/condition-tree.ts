@@ -37,6 +37,92 @@ function isJsonPrimitive(value: unknown): value is JsonPrimitive {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
+/** Rejects any object key not in `allowed` — exact field allow-list, caller decides whether `op` is one of them. */
+function assertNoExtraFields(obj: Record<string, unknown>, allowed: readonly string[], message: (extra: string) => string): void {
+  const known = new Set(allowed);
+  const extra = Object.keys(obj).filter((k) => !known.has(k));
+  if (extra.length > 0) {
+    throw new SchemaValidationError(message(extra.join(', ')));
+  }
+}
+
+/** Validates an `{ and: [...] }` / `{ or: [...] }` node — shared shape, differs only by key. */
+function validateAndOr(obj: Record<string, unknown>, key: 'and' | 'or', context: string): void {
+  assertNoExtraFields(obj, [key], (extra) => `${context}.${key}: unexpected additional field(s) ${extra}`);
+  const children = obj[key];
+  if (!Array.isArray(children) || children.length === 0) {
+    throw new SchemaValidationError(`${context}.${key}: must be a non-empty array`);
+  }
+  children.forEach((child, i) => validateConditionNode(child, `${context}.${key}[${i}]`));
+}
+
+/** Validates a `{ not: ... }` node. */
+function validateNot(obj: Record<string, unknown>, context: string): void {
+  assertNoExtraFields(obj, ['not'], (extra) => `${context}.not: unexpected additional field(s) ${extra}`);
+  validateConditionNode(obj.not, `${context}.not`);
+}
+
+/** Validates a `{ op: 'custom', name, args? }` leaf. */
+function validateCustomLeaf(obj: Record<string, unknown>, context: string): void {
+  const { name, args } = obj;
+  assertNoExtraFields(obj, ['op', 'name', 'args'], (extra) => `${context}: unknown field(s) on custom leaf: ${extra}`);
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new SchemaValidationError(`${context}: custom leaf requires a non-empty "name"`);
+  }
+  if (args !== undefined && (typeof args !== 'object' || args === null || Array.isArray(args))) {
+    throw new SchemaValidationError(`${context}: custom leaf "args" must be an object if present`);
+  }
+}
+
+/** Validates an `{ op: 'exists' | 'notExists', path }` leaf. */
+function validateExistsLeaf(obj: Record<string, unknown>, op: string, context: string): void {
+  const { path } = obj;
+  assertNoExtraFields(obj, ['op', 'path'], (extra) => `${context}: unknown field(s) on "${op}" leaf: ${extra}`);
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
+  }
+}
+
+/** Validates an `{ op: 'in' | 'notIn', path, value[] }` leaf. */
+function validateInLeaf(obj: Record<string, unknown>, op: string, context: string): void {
+  const { path, value } = obj;
+  assertNoExtraFields(obj, ['op', 'path', 'value'], (extra) => `${context}: unknown field(s) on "${op}" leaf: ${extra}`);
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
+  }
+  if (!Array.isArray(value) || value.length === 0 || !value.every(isJsonPrimitive)) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty array "value" of primitives`);
+  }
+}
+
+/** Validates a comparison leaf (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`contains`/`startsWith`/`endsWith`) — `path` plus exactly one of `value`/`valuePath`. */
+function validateComparisonLeaf(obj: Record<string, unknown>, op: string, context: string): void {
+  const { path, value, valuePath } = obj;
+  assertNoExtraFields(obj, ['op', 'path', 'value', 'valuePath'], (extra) => `${context}: unknown field(s) on "${op}" leaf: ${extra}`);
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
+  }
+  const hasValue = value !== undefined;
+  const hasValuePath = valuePath !== undefined;
+  if (hasValue === hasValuePath) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf requires exactly one of "value"/"valuePath"`);
+  }
+  if (hasValue) {
+    if (!isJsonPrimitive(value)) {
+      throw new SchemaValidationError(`${context}: "${op}" leaf's "value" must be a string, number, or boolean`);
+    }
+    // Numeric ops with a literal value: catch the type mistake now — we
+    // know the literal's type at write time. A `valuePath` operand can't
+    // be checked until evaluation (its runtime type isn't known yet); see
+    // evaluateLeaf's NaN-on-either-side fail-closed handling for that case.
+    if (NUMERIC_OPS.has(op) && typeof value !== 'number') {
+      throw new SchemaValidationError(`${context}: "${op}" leaf's literal "value" must be a number`);
+    }
+  } else if (typeof valuePath !== 'string' || valuePath.length === 0) {
+    throw new SchemaValidationError(`${context}: "${op}" leaf's "valuePath" must be a non-empty string`);
+  }
+}
+
 /**
  * Structural validation only — does this look like a well-formed
  * `ConditionNode`? Cannot (and does not try to) check whether a `custom`
@@ -44,6 +130,10 @@ function isJsonPrimitive(value: unknown): value is JsonPrimitive {
  * runtime concern (the registry isn't part of the role file), checked at
  * evaluation time instead (`evaluateConditionNode` throws
  * `UnknownConditionOperatorError`, not a validation-time error).
+ *
+ * A thin shape-dispatcher: it only decides *which* leaf/combinator this is
+ * and delegates the actual field checks to one of the `validate*` helpers
+ * above, so each shape's rules stay independently readable and testable.
  */
 export function validateConditionNode(node: unknown, context = 'condition'): asserts node is ConditionNode {
   if (typeof node !== 'object' || node === null || Array.isArray(node)) {
@@ -51,106 +141,19 @@ export function validateConditionNode(node: unknown, context = 'condition'): ass
   }
   const obj = node as Record<string, unknown>;
 
-  if ('and' in obj || 'or' in obj) {
-    const key = 'and' in obj ? 'and' : 'or';
-    const extra = Object.keys(obj).filter((k) => k !== key);
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}.${key}: unexpected additional field(s) ${extra.join(', ')}`);
-    }
-    const children = obj[key];
-    if (!Array.isArray(children) || children.length === 0) {
-      throw new SchemaValidationError(`${context}.${key}: must be a non-empty array`);
-    }
-    children.forEach((child, i) => validateConditionNode(child, `${context}.${key}[${i}]`));
-    return;
-  }
-
-  if ('not' in obj) {
-    const extra = Object.keys(obj).filter((k) => k !== 'not');
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}.not: unexpected additional field(s) ${extra.join(', ')}`);
-    }
-    validateConditionNode(obj.not, `${context}.not`);
-    return;
-  }
+  if ('and' in obj) return validateAndOr(obj, 'and', context);
+  if ('or' in obj) return validateAndOr(obj, 'or', context);
+  if ('not' in obj) return validateNot(obj, context);
 
   const { op } = obj;
   if (typeof op !== 'string') {
     throw new SchemaValidationError(`${context}: leaf node missing a valid "op"`);
   }
 
-  if (op === 'custom') {
-    const { name, args, ...rest } = obj;
-    const extra = Object.keys(rest).filter((k) => k !== 'op');
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}: unknown field(s) on custom leaf: ${extra.join(', ')}`);
-    }
-    if (typeof name !== 'string' || name.length === 0) {
-      throw new SchemaValidationError(`${context}: custom leaf requires a non-empty "name"`);
-    }
-    if (args !== undefined && (typeof args !== 'object' || args === null || Array.isArray(args))) {
-      throw new SchemaValidationError(`${context}: custom leaf "args" must be an object if present`);
-    }
-    return;
-  }
-
-  if (EXISTS_OPS.has(op)) {
-    const { path, ...rest } = obj;
-    const extra = Object.keys(rest).filter((k) => k !== 'op');
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}: unknown field(s) on "${op}" leaf: ${extra.join(', ')}`);
-    }
-    if (typeof path !== 'string' || path.length === 0) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
-    }
-    return;
-  }
-
-  if (IN_OPS.has(op)) {
-    const { path, value, ...rest } = obj;
-    const extra = Object.keys(rest).filter((k) => k !== 'op');
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}: unknown field(s) on "${op}" leaf: ${extra.join(', ')}`);
-    }
-    if (typeof path !== 'string' || path.length === 0) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
-    }
-    if (!Array.isArray(value) || value.length === 0 || !value.every(isJsonPrimitive)) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty array "value" of primitives`);
-    }
-    return;
-  }
-
-  if (COMPARISON_OPS.has(op)) {
-    const { path, value, valuePath, ...rest } = obj;
-    const extra = Object.keys(rest).filter((k) => k !== 'op');
-    if (extra.length > 0) {
-      throw new SchemaValidationError(`${context}: unknown field(s) on "${op}" leaf: ${extra.join(', ')}`);
-    }
-    if (typeof path !== 'string' || path.length === 0) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf requires a non-empty "path"`);
-    }
-    const hasValue = value !== undefined;
-    const hasValuePath = valuePath !== undefined;
-    if (hasValue === hasValuePath) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf requires exactly one of "value"/"valuePath"`);
-    }
-    if (hasValue) {
-      if (!isJsonPrimitive(value)) {
-        throw new SchemaValidationError(`${context}: "${op}" leaf's "value" must be a string, number, or boolean`);
-      }
-      // Numeric ops with a literal value: catch the type mistake now — we
-      // know the literal's type at write time. A `valuePath` operand can't
-      // be checked until evaluation (its runtime type isn't known yet); see
-      // evaluateLeaf's NaN-on-either-side fail-closed handling for that case.
-      if (NUMERIC_OPS.has(op) && typeof value !== 'number') {
-        throw new SchemaValidationError(`${context}: "${op}" leaf's literal "value" must be a number`);
-      }
-    } else if (typeof valuePath !== 'string' || valuePath.length === 0) {
-      throw new SchemaValidationError(`${context}: "${op}" leaf's "valuePath" must be a non-empty string`);
-    }
-    return;
-  }
+  if (op === 'custom') return validateCustomLeaf(obj, context);
+  if (EXISTS_OPS.has(op)) return validateExistsLeaf(obj, op, context);
+  if (IN_OPS.has(op)) return validateInLeaf(obj, op, context);
+  if (COMPARISON_OPS.has(op)) return validateComparisonLeaf(obj, op, context);
 
   throw new SchemaValidationError(`${context}: unknown operator ${JSON.stringify(op)}`);
 }
@@ -214,6 +217,51 @@ function resolveRhs(leaf: Extract<ConditionLeaf, { op: string }> & ({ value: Jso
   return 'value' in leaf ? leaf.value : resolvePath(leaf.valuePath, user, context);
 }
 
+/**
+ * `gt`/`gte`/`lt`/`lte` dispatch table — O(1) lookup instead of a
+ * sequential if-chain, and each comparator is independently trivial to
+ * read/test. `NUMERIC_OPS` (used by `validateComparisonLeaf`) must stay in
+ * sync with this table's keys.
+ */
+const NUMERIC_COMPARATORS: Record<'gt' | 'gte' | 'lt' | 'lte', (left: number, right: number) => boolean> = {
+  gt: (left, right) => left > right,
+  gte: (left, right) => left >= right,
+  lt: (left, right) => left < right,
+  lte: (left, right) => left <= right,
+};
+
+/**
+ * Coerces both operands to `Number` and dispatches to `NUMERIC_COMPARATORS`.
+ * Fail-closed, not a throw, on either side being `NaN`: a `valuePath`
+ * operand's runtime type can't be checked at write time (see
+ * `validateComparisonLeaf`), so a bad comparison here denies rather than
+ * crashing `can()` mid-call.
+ */
+function evaluateNumericComparison(op: 'gt' | 'gte' | 'lt' | 'lte', resolved: unknown, rhs: unknown): boolean {
+  const left = Number(resolved);
+  const right = Number(rhs);
+  if (Number.isNaN(left) || Number.isNaN(right)) return false;
+  return NUMERIC_COMPARATORS[op](left, right);
+}
+
+/** Evaluates the `contains` op: array membership if `resolved` is an array, substring match otherwise. */
+function evaluateContains(resolved: unknown, rhs: unknown): boolean {
+  if (Array.isArray(resolved)) return resolved.some((item) => toComparable(item) === toComparable(rhs));
+  return toComparable(resolved ?? '').includes(toComparable(rhs));
+}
+
+/** Evaluates `in`: does `candidates` contain something comparably equal to `resolved`? (`notIn` is this, negated.) */
+function isMember(resolved: unknown, candidates: readonly JsonPrimitive[]): boolean {
+  return candidates.some((candidate) => toComparable(resolved) === toComparable(candidate));
+}
+
+/** Evaluates `startsWith`/`endsWith` against the string forms of `resolved`/`rhs`. */
+function evaluateStringEdge(op: 'startsWith' | 'endsWith', resolved: unknown, rhs: unknown): boolean {
+  const left = toComparable(resolved ?? '');
+  const right = toComparable(rhs);
+  return op === 'startsWith' ? left.startsWith(right) : left.endsWith(right);
+}
+
 function evaluateLeaf(leaf: ConditionLeaf, user: Record<string, unknown>, context: Record<string, unknown>, operators: Record<string, ConditionOperatorFn>): boolean {
   if (leaf.op === 'custom') {
     const fn = operators[leaf.name];
@@ -225,43 +273,28 @@ function evaluateLeaf(leaf: ConditionLeaf, user: Record<string, unknown>, contex
 
   const resolved = resolvePath(leaf.path, user, context);
 
+  if (leaf.op === 'gt' || leaf.op === 'gte' || leaf.op === 'lt' || leaf.op === 'lte') {
+    return evaluateNumericComparison(leaf.op, resolved, resolveRhs(leaf, user, context));
+  }
+
   switch (leaf.op) {
     case 'exists':
       return resolved !== undefined;
     case 'notExists':
       return resolved === undefined;
     case 'in':
-      return leaf.value.some((candidate) => toComparable(resolved) === toComparable(candidate));
+      return isMember(resolved, leaf.value);
     case 'notIn':
-      return !leaf.value.some((candidate) => toComparable(resolved) === toComparable(candidate));
+      return !isMember(resolved, leaf.value);
     case 'eq':
       return toComparable(resolved) === toComparable(resolveRhs(leaf, user, context));
     case 'neq':
       return toComparable(resolved) !== toComparable(resolveRhs(leaf, user, context));
-    case 'gt':
-    case 'gte':
-    case 'lt':
-    case 'lte': {
-      const left = Number(resolved);
-      const right = Number(resolveRhs(leaf, user, context));
-      // Fail-closed, not a throw: a `valuePath` operand's runtime type
-      // can't be checked at write time (see validateConditionNode), so a
-      // bad comparison here denies rather than crashing can() mid-call.
-      if (Number.isNaN(left) || Number.isNaN(right)) return false;
-      if (leaf.op === 'gt') return left > right;
-      if (leaf.op === 'gte') return left >= right;
-      if (leaf.op === 'lt') return left < right;
-      return left <= right;
-    }
-    case 'contains': {
-      const rhs = resolveRhs(leaf, user, context);
-      if (Array.isArray(resolved)) return resolved.some((item) => toComparable(item) === toComparable(rhs));
-      return toComparable(resolved ?? '').includes(toComparable(rhs));
-    }
+    case 'contains':
+      return evaluateContains(resolved, resolveRhs(leaf, user, context));
     case 'startsWith':
-      return toComparable(resolved ?? '').startsWith(toComparable(resolveRhs(leaf, user, context)));
     case 'endsWith':
-      return toComparable(resolved ?? '').endsWith(toComparable(resolveRhs(leaf, user, context)));
+      return evaluateStringEdge(leaf.op, resolved, resolveRhs(leaf, user, context));
     default:
       // Exhaustiveness guard — validateConditionNode should have rejected
       // anything reaching here at write/load time.

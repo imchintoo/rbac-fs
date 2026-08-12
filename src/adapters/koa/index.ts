@@ -14,8 +14,10 @@ export interface RbacLike {
   can(user: RbacUser, resource: string, action: string, context?: Record<string, unknown>): Promise<boolean>;
 }
 
+/** A static value, or a function deriving one from the Koa context (e.g. from `ctx.params`). */
 export type ContextDerived<T> = T | ((ctx: Context) => T);
 
+/** Options accepted by {@link rbacMiddleware}. */
 export interface RbacMiddlewareOptions {
   /** Extract the acting user from the context. Default: `ctx.state.user` — Koa's own documented convention for passing data through middleware. */
   getUser?: (ctx: Context) => RbacUser | undefined;

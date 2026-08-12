@@ -63,6 +63,7 @@ export interface Condition {
   condition?: ConditionNode;
 }
 
+/** Stamped automatically by `RBAC.createRole()`/mutations — not hand-set by callers. */
 export interface RoleMeta {
   createdAt?: string;
   updatedAt?: string;
@@ -92,6 +93,7 @@ export interface CreateRoleInput {
   conditions?: Condition[];
 }
 
+/** Options accepted by `RBAC`'s write methods (`createRole`, `deleteRole`, ...). */
 export interface MutationOptions {
   /** Bypass reserved-name / dependents-block guardrails. */
   force?: boolean;
@@ -110,6 +112,7 @@ export interface AuditEntry {
   tenantId: string | null;
 }
 
+/** Options accepted by `RBAC.getAuditLog()`. */
 export interface GetAuditLogOptions {
   /** ISO date/time string — only entries at/after this are returned. */
   since?: string;
@@ -162,6 +165,7 @@ export interface RbacUser {
   [key: string]: unknown;
 }
 
+/** Payload passed to a `StorageAdapter.watch()` callback on role file changes. */
 export type ChangeEvent = {
   type: 'role-changed' | 'role-deleted';
   tenantId: string | null;
@@ -193,6 +197,7 @@ export interface StorageAdapter {
   close?(): Promise<void>;
 }
 
+/** Constructor options for `RBAC` (see `src/index.ts`) / the Core Engine's `RBAC` class. */
 export interface RBACOptions {
   /** Explicit tenant. Omit (or pass null) to operate against `_shared/`. */
   tenantId?: string | null;
@@ -213,6 +218,12 @@ export interface RBACOptions {
   operators?: Record<string, ConditionOperatorFn>;
 }
 
+/**
+ * Base class for every error rbac-fs throws. Carries a stable, machine-
+ * checkable `code` (e.g. `'ROLE_NOT_FOUND'`) alongside the human-readable
+ * `message` — prefer branching on `error.code` (or `instanceof` one of the
+ * subclasses below) over parsing `error.message`, which may change wording.
+ */
 export class RbacError extends Error {
   constructor(
     message: string,
@@ -223,6 +234,7 @@ export class RbacError extends Error {
   }
 }
 
+/** Thrown when a `tenantId`/`roleName` fails the `^[a-zA-Z0-9_-]+$` identifier check (§8 path-traversal guardrail). */
 export class InvalidIdentifierError extends RbacError {
   constructor(kind: 'tenantId' | 'roleName', value: string) {
     super(`Invalid ${kind}: ${JSON.stringify(value)} — must match ^[a-zA-Z0-9_-]+$`, 'INVALID_IDENTIFIER');
@@ -230,6 +242,7 @@ export class InvalidIdentifierError extends RbacError {
   }
 }
 
+/** Thrown when a role's `inherits` chain (directly or transitively) cycles back on itself. */
 export class CircularInheritanceError extends RbacError {
   constructor(cycle: string[]) {
     super(`Circular role inheritance detected: ${cycle.join(' -> ')}`, 'CIRCULAR_INHERITANCE');
@@ -237,6 +250,7 @@ export class CircularInheritanceError extends RbacError {
   }
 }
 
+/** Thrown when a referenced role (the target, or an `inherits` parent) doesn't exist. */
 export class RoleNotFoundError extends RbacError {
   constructor(roleName: string) {
     super(`Role not found: ${JSON.stringify(roleName)}`, 'ROLE_NOT_FOUND');
@@ -244,6 +258,7 @@ export class RoleNotFoundError extends RbacError {
   }
 }
 
+/** Thrown by `parseCondition`/`validateCondition` when a legacy `when` string doesn't match the supported grammar. */
 export class InvalidConditionError extends RbacError {
   constructor(when: string) {
     super(`Invalid condition expression: ${JSON.stringify(when)} — v0.1 supports "<path> == <path|literal>" only`, 'INVALID_CONDITION');
@@ -251,6 +266,7 @@ export class InvalidConditionError extends RbacError {
   }
 }
 
+/** Thrown when a `{ op: 'custom' }` condition leaf names an operator not present in `RBACOptions.operators`. */
 export class UnknownConditionOperatorError extends RbacError {
   constructor(name: string) {
     super(`Unknown custom condition operator: ${JSON.stringify(name)} — no function registered under this name in RBACOptions.operators`, 'UNKNOWN_CONDITION_OPERATOR');
@@ -258,6 +274,7 @@ export class UnknownConditionOperatorError extends RbacError {
   }
 }
 
+/** Thrown by a method that is defined on the public API surface but not implemented until a later version. */
 export class NotImplementedYetError extends RbacError {
   constructor(method: string, availableInVersion: string) {
     super(`${method}() is not implemented until ${availableInVersion}`, 'NOT_IMPLEMENTED_YET');
@@ -265,6 +282,7 @@ export class NotImplementedYetError extends RbacError {
   }
 }
 
+/** Thrown by `schema.ts` validators when a role/permission/condition input fails shape validation. */
 export class SchemaValidationError extends RbacError {
   constructor(reason: string) {
     super(`Invalid role input: ${reason}`, 'SCHEMA_VALIDATION');
@@ -272,6 +290,7 @@ export class SchemaValidationError extends RbacError {
   }
 }
 
+/** Thrown by `createRole`/`deleteRole` for a reserved role name (`admin`, `system-admin`) unless `{ force: true }` is passed. */
 export class ReservedNameError extends RbacError {
   constructor(roleName: string) {
     super(`${JSON.stringify(roleName)} is a reserved role name — pass { force: true } to override`, 'RESERVED_NAME');
@@ -279,6 +298,7 @@ export class ReservedNameError extends RbacError {
   }
 }
 
+/** Thrown by `createRole` when a role with that name already exists, unless `{ force: true }` is passed to overwrite. */
 export class RoleAlreadyExistsError extends RbacError {
   constructor(roleName: string) {
     super(`Role already exists: ${JSON.stringify(roleName)} — pass { force: true } to overwrite`, 'ROLE_ALREADY_EXISTS');
@@ -286,6 +306,7 @@ export class RoleAlreadyExistsError extends RbacError {
   }
 }
 
+/** Thrown when calling an optional `StorageAdapter` method (e.g. `loadAuditLog`, `watch`) the wired adapter doesn't implement. */
 export class UnsupportedOperationError extends RbacError {
   constructor(operation: string) {
     super(`The current StorageAdapter does not implement ${operation}()`, 'UNSUPPORTED_OPERATION');
@@ -293,6 +314,7 @@ export class UnsupportedOperationError extends RbacError {
   }
 }
 
+/** Thrown by `deleteRole` when other roles still `inherits` from the target, unless `{ force: true }` is passed. */
 export class RoleHasDependentsError extends RbacError {
   constructor(roleName: string, dependents: string[]) {
     super(

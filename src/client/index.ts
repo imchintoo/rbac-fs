@@ -6,9 +6,10 @@
  * docs/backlog/adr-v0.4-browser-client.md.
  */
 import { evaluateConditionEntry } from '../core/condition-tree.js';
-import { hasUnconditionalGrant, matchingConditions, type ResolvedRole } from '../core/role-resolver.js';
+import { hasUnconditionalGrant, indexByResource, matchingConditions, type ResolvedRole } from '../core/role-resolver.js';
 import type { ConditionOperatorFn, RBACClientSnapshot } from '../core/types.js';
 
+/** Constructor options for {@link RBACClient}. */
 export interface RBACClientOptions {
   /**
    * Named predicates a `{ op: 'custom' }` condition leaf can call by name —
@@ -32,25 +33,39 @@ export interface RBACClientOptions {
 export class RBACClient {
   private readonly snapshot: RBACClientSnapshot;
   private readonly operators: Record<string, ConditionOperatorFn>;
+  /**
+   * Minimal ResolvedRole-shaped view over the snapshot, built once here
+   * rather than per `can()` call — `snapshot` is immutable for the
+   * lifetime of a client (see the class doc), so its resource index never
+   * goes stale. Reuses `hasUnconditionalGrant`/`matchingConditions` from
+   * `role-resolver.ts` (single source of truth with `RBAC.can()`'s
+   * server-side evaluator, per the ADR).
+   */
+  private readonly resolved: ResolvedRole;
 
   constructor(snapshot: RBACClientSnapshot, options: RBACClientOptions = {}) {
     this.snapshot = snapshot;
     this.operators = options.operators ?? {};
-  }
-
-  can(resource: string, action: string, context: Record<string, unknown> = {}): boolean {
-    // RBACClient has no role/inheritance concept — the snapshot IS the
-    // already-flattened result — so we build a minimal ResolvedRole-shaped
-    // object to reuse the exact same evaluator functions RBAC.can() uses
-    // server-side (single source of truth, per the ADR — both sides call
-    // evaluateConditionEntry() from condition-tree.ts, not two separate
-    // implementations).
-    const resolved: ResolvedRole = {
+    const conditions = snapshot.conditions ?? [];
+    this.resolved = {
       name: '(snapshot)',
       ancestry: [],
-      permissions: this.snapshot.permissions,
-      conditions: this.snapshot.conditions ?? [],
+      permissions: snapshot.permissions,
+      conditions,
+      permissionsByResource: indexByResource(snapshot.permissions),
+      conditionsByResource: indexByResource(conditions),
     };
+  }
+
+  /**
+   * Does the snapshot grant `action` on `resource`? Purely in-memory —
+   * checks unconditional grants first, then evaluates any matching
+   * conditional grants against `snapshot.user`/`context` using the same
+   * evaluator `RBAC.can()` uses server-side. Unlike the server-side
+   * `RBAC.can()`, this does not audit-log and does not return a `Promise`.
+   */
+  can(resource: string, action: string, context: Record<string, unknown> = {}): boolean {
+    const resolved = this.resolved;
 
     if (hasUnconditionalGrant(resolved, resource, action)) {
       return true;

@@ -17,6 +17,7 @@ import type { AuditEntry, ChangeEvent, GetAuditLogOptions, RoleDefinition, Rotat
 
 const gunzipAsync = promisify(gunzip);
 
+/** Constructor options for {@link LocalJsonAdapter}. */
 export interface LocalJsonAdapterOptions {
   /** Explicit data dir — highest priority. See docs/PLAN.md §4. */
   dataDir?: string;
@@ -107,7 +108,42 @@ function isEnoent(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'ENOENT';
 }
 
+/**
+ * Builds rotating-file-stream's filename generator for one role's log:
+ * `<role>.jsonl` for the active file (called with `time: null`), or
+ * `<role>.jsonl.<index>[.gz]` for a rotated one. Extracted to a named,
+ * independently-readable function rather than an inline closure in
+ * `getStream`.
+ */
+function makeLogFilenameGenerator(roleName: string, compressed: boolean): (time: number | Date, index?: number) => string {
+  const suffix = compressed ? '.gz' : '';
+  return ((time: number | Date | null, index?: number) => (time === null ? `${roleName}.jsonl` : `${roleName}.jsonl.${index}${suffix}`)) as (time: number | Date, index?: number) => string;
+}
+
+/** Parses JSONL audit-log text into entries, skipping (not failing on) any line that doesn't parse — docs/PLAN.md §5.2's rationale for JSONL. */
+function parseAuditLines(text: string): AuditEntry[] {
+  const entries: AuditEntry[] = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      entries.push(JSON.parse(trimmed) as AuditEntry);
+    } catch {
+      // malformed line — skip it, don't fail the whole read (§5.2)
+    }
+  }
+  return entries;
+}
+
+/**
+ * Default `StorageAdapter` for Node: roles/logs live as JSON/JSONL files
+ * under a resolved `.rbac/` directory (`resolveDataDir`) — `_shared/` for
+ * `tenantId: null`, `tenants/<id>/` otherwise (docs/PLAN.md §4). Reads are
+ * optionally memoized and invalidated live via chokidar; audit-log writes
+ * go through a rotating, gzip-compressing stream per (tenant, role).
+ */
 export class LocalJsonAdapter implements StorageAdapter {
+  /** The resolved `.rbac/` directory this instance reads/writes — see `resolveDataDir`. */
   readonly dataDir: string;
   private readonly rotation: Required<RotationOptions>;
   private readonly cacheEnabled: boolean;
@@ -171,6 +207,12 @@ export class LocalJsonAdapter implements StorageAdapter {
     return watcher;
   }
 
+  /**
+   * Reads `roles/<roleName>.json`, or `null` if it doesn't exist. Served
+   * from the in-memory cache when enabled (default) and already populated;
+   * a chokidar watcher on the tenant's roles dir is lazily started to keep
+   * that cache invalidated on external changes (see `ensureWatcher`).
+   */
   async loadRole(tenantId: string | null, roleName: string): Promise<RoleDefinition | null> {
     if (tenantId !== null) assertValidIdentifier('tenantId', tenantId);
     assertValidIdentifier('roleName', roleName);
@@ -203,6 +245,11 @@ export class LocalJsonAdapter implements StorageAdapter {
    * Deliberately uncached — always a fresh `readdir` + reads, so newly
    * added role files are discovered without needing directory-level
    * invalidation logic. See docs/backlog/adr-v0.5-file-watcher.md.
+   *
+   * Reads are independent per-file (no shared state, and the return value
+   * is an unordered array) — issued concurrently via `Promise.all` rather
+   * than one at a time, so wall-clock time scales with the slowest single
+   * read instead of the sum of all of them.
    */
   async loadAllRoles(tenantId: string | null): Promise<RoleDefinition[]> {
     if (tenantId !== null) assertValidIdentifier('tenantId', tenantId);
@@ -214,13 +261,11 @@ export class LocalJsonAdapter implements StorageAdapter {
       if (isEnoent(error)) return [];
       throw error;
     }
-    const roles: RoleDefinition[] = [];
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-      const raw = await readFile(join(dir, file), 'utf-8');
-      roles.push(JSON.parse(raw) as RoleDefinition);
-    }
-    return roles;
+    return Promise.all(
+      files
+        .filter((file) => file.endsWith('.json'))
+        .map(async (file) => JSON.parse(await readFile(join(dir, file), 'utf-8')) as RoleDefinition),
+    );
   }
 
   /**
@@ -292,10 +337,7 @@ export class LocalJsonAdapter implements StorageAdapter {
     // compression is on. This also matches docs/PLAN.md §4's example
     // (`admin.jsonl.1.gz`) instead of leaving compressed files with a
     // misleading extension-less name.
-    const suffix = this.rotation.compress ? '.gz' : '';
-    const generator = (time: number | Date | null, index?: number): string => (time === null ? `${roleName}.jsonl` : `${roleName}.jsonl.${index}${suffix}`);
-
-    const stream = createStream(generator as (time: number | Date, index?: number) => string, {
+    const stream = createStream(makeLogFilenameGenerator(roleName, Boolean(this.rotation.compress)), {
       size: normalizeSize(this.rotation.maxSize),
       compress: this.rotation.compress,
       maxFiles: this.rotation.maxBackups,
@@ -360,8 +402,27 @@ export class LocalJsonAdapter implements StorageAdapter {
   }
 
   /**
+   * Reads one audit-log file's full text, transparently gunzipping `.gz`
+   * files. Returns `null` (not a throw) if the file was pruned/rotated away
+   * between the caller's `readdir()` and this read.
+   */
+  private async readLogFileText(filePath: string): Promise<string | null> {
+    try {
+      if (filePath.endsWith('.gz')) {
+        const compressed = await readFile(filePath);
+        return (await gunzipAsync(compressed)).toString('utf-8');
+      }
+      return await readFile(filePath, 'utf-8');
+    } catch (error) {
+      if (isEnoent(error)) return null;
+      throw error;
+    }
+  }
+
+  /**
    * Reads across the active file + any rotated files still on disk
-   * (rotated + gzip-compressed included), skipping any line that fails to
+   * (rotated + gzip-compressed included; all read concurrently — see
+   * `loadAllRoles` for the same reasoning), skipping any line that fails to
    * parse rather than failing the whole read (docs/PLAN.md §5.2's own
    * rationale for JSONL). Returns entries sorted chronologically.
    */
@@ -379,33 +440,8 @@ export class LocalJsonAdapter implements StorageAdapter {
     }
 
     const logFiles = files.filter((file) => file === `${roleName}.jsonl` || file.startsWith(`${roleName}.jsonl.`));
-    const entries: AuditEntry[] = [];
-
-    for (const file of logFiles) {
-      const filePath = join(dir, file);
-      let text: string;
-      try {
-        if (file.endsWith('.gz')) {
-          const compressed = await readFile(filePath);
-          text = (await gunzipAsync(compressed)).toString('utf-8');
-        } else {
-          text = await readFile(filePath, 'utf-8');
-        }
-      } catch (error) {
-        if (isEnoent(error)) continue; // pruned/rotated away between readdir() and read
-        throw error;
-      }
-
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          entries.push(JSON.parse(trimmed) as AuditEntry);
-        } catch {
-          // malformed line — skip it, don't fail the whole read (§5.2)
-        }
-      }
-    }
+    const texts = await Promise.all(logFiles.map((file) => this.readLogFileText(join(dir, file))));
+    const entries = texts.filter((text): text is string => text !== null).flatMap(parseAuditLines);
 
     const filtered = options.since ? entries.filter((entry) => entry.ts >= options.since!) : entries;
     return filtered.sort((a, b) => a.ts.localeCompare(b.ts));

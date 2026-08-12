@@ -16,11 +16,13 @@ export interface RbacLike {
   can(user: RbacUser, resource: string, action: string, context?: Record<string, unknown>): Promise<boolean>;
 }
 
+/** Per-route RBAC requirement, declared via `{ config: { rbac: {...} } }` on a Fastify route. */
 export interface RouteRbacConfig {
   resource: string;
   action: string;
 }
 
+/** Options passed to `app.register(rbacPlugin, options)`. */
 export interface RbacPluginOptions {
   rbac: RbacLike;
   /** Extract the acting user from the request. Default: `request.user`. Never assume a specific auth plugin populated it. */

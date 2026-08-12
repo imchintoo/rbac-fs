@@ -7,14 +7,51 @@
 import { CircularInheritanceError, RoleNotFoundError, type Condition, type Permission, type RoleDefinition } from './types.js';
 import { validateConditionField } from './condition-tree.js';
 
+/** Flattened result of walking a role's `inherits` chain — see {@link resolveRole}. */
 export interface ResolvedRole {
   name: string;
   /** Every role name that contributed permissions, target included, each once. */
   ancestry: string[];
   permissions: Permission[];
   conditions: Condition[];
+  /**
+   * `permissions` grouped by `resource` (built once, alongside the arrays
+   * above). Lets {@link hasUnconditionalGrant} do an O(1)-average `Map.get`
+   * instead of an O(P) scan over every permission the role holds, across
+   * every resource — the difference matters once a role's grants span many
+   * resource types. See {@link indexByResource}.
+   */
+  permissionsByResource: Map<string, Permission[]>;
+  /** Same grouping as `permissionsByResource`, for `conditions` — see {@link matchingConditions}. */
+  conditionsByResource: Map<string, Condition[]>;
 }
 
+/**
+ * Groups `entries` by their `resource` field — the shared indexing step
+ * behind `ResolvedRole.permissionsByResource`/`conditionsByResource` and
+ * `RBACClient`'s equivalent snapshot index (`src/client/index.ts`), so both
+ * sides build the index the same way. One O(n) pass up front turns repeated
+ * per-`resource` lookups into O(1)-average `Map.get` instead of an O(n) scan
+ * each time.
+ */
+export function indexByResource<T extends { resource: string }>(entries: readonly T[]): Map<string, T[]> {
+  const index = new Map<string, T[]>();
+  for (const entry of entries) {
+    const bucket = index.get(entry.resource);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      index.set(entry.resource, [entry]);
+    }
+  }
+  return index;
+}
+
+/**
+ * Storage-agnostic role loader passed to {@link resolveRole}. Typically a
+ * closure over a `StorageAdapter.loadRole` call for one fixed tenant, but
+ * can be backed by anything (e.g. a plain in-memory map in tests).
+ */
 export type LoadRoleFn = (roleName: string) => Promise<RoleDefinition | null>;
 
 /**
@@ -65,15 +102,24 @@ export async function resolveRole(roleName: string, loadRole: LoadRoleFn): Promi
   }
 
   await walk(roleName);
-  return { name: roleName, ancestry, permissions, conditions };
+  return {
+    name: roleName,
+    ancestry,
+    permissions,
+    conditions,
+    permissionsByResource: indexByResource(permissions),
+    conditionsByResource: indexByResource(conditions),
+  };
 }
 
 /** True if `resolved` grants `action` on `resource` unconditionally. */
 export function hasUnconditionalGrant(resolved: ResolvedRole, resource: string, action: string): boolean {
-  return resolved.permissions.some((permission) => permission.resource === resource && permission.actions.includes(action));
+  const candidates = resolved.permissionsByResource.get(resource);
+  return candidates !== undefined && candidates.some((permission) => permission.actions.includes(action));
 }
 
 /** All conditional grants matching `resource`/`action`, checked in order. */
 export function matchingConditions(resolved: ResolvedRole, resource: string, action: string): Condition[] {
-  return resolved.conditions.filter((condition) => condition.resource === resource && condition.actions.includes(action));
+  const candidates = resolved.conditionsByResource.get(resource);
+  return candidates === undefined ? [] : candidates.filter((condition) => condition.actions.includes(action));
 }

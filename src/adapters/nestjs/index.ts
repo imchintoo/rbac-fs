@@ -28,8 +28,10 @@ export interface RbacLike {
 /** DI token a consumer binds their `RBAC` instance to — see `provideRbac`. */
 export const RBAC_TOKEN = 'RBAC_FS_INSTANCE';
 
+/** Reflect-metadata key `@RequirePermission()` stores its `RequiredPermission` payload under. */
 export const REQUIRE_PERMISSION_KEY = 'rbac-fs:permission';
 
+/** The `{ resource, action }` metadata payload `@RequirePermission()` attaches, as read back by `RbacGuard`. */
 export interface RequiredPermission {
   resource: string;
   action: string;
@@ -95,6 +97,7 @@ export class RbacGuard implements CanActivate {
     return {};
   }
 
+  /** Nest calls this per guarded request; see the class doc for the full behavior. */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const required = this.reflector.getAllAndOverride<RequiredPermission | undefined>(REQUIRE_PERMISSION_KEY, [context.getHandler(), context.getClass()]);
 
