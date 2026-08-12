@@ -32,9 +32,17 @@ jobs:
         with:
           fetch-depth: 0 # changesets needs full history to diff against the last release
 
+      # Node 22, not 20: `npm install -g npm@latest` below floats to
+      # whatever the newest npm major is (npm 12 as of 2026-08, which
+      # requires Node >=22) — pinning npm to an older major instead would
+      # just push this same failure to npm's *next* engine bump. package.json's
+      # own `engines.node: ">=20"` is unaffected — that's the minimum for
+      # *consumers*, verified separately by ci.yml running on Node 20; this
+      # job only builds+publishes, it doesn't assert the minimum supported
+      # runtime.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
       # Trusted Publishing (OIDC token exchange during `npm publish`)

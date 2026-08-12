@@ -21,13 +21,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Node 22, not 20 — `npm install -g npm@latest` needs it (see
+      # release.yml's comment on the same line for why).
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org
-      # Trusted Publishing (OIDC token exchange during `npm publish`)
-      # requires a recent npm CLI — pin explicitly rather than trusting
-      # whatever ships with actions/setup-node's Node 20.
       - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run verify
