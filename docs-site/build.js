@@ -31,6 +31,9 @@ const OUT_DIR = path.join(ROOT, '_site');
 // and asset path needs this prefix. Override via DOCS_BASE_PATH for a
 // custom domain (where it should be '/').
 const BASE_PATH = process.env.DOCS_BASE_PATH || '/rbac-fs/';
+const SITE_ORIGIN = process.env.DOCS_SITE_ORIGIN || 'https://imchintoo.github.io';
+const CONTENT_DIR_BLOG = path.join(CONTENT_DIR, 'blog');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ---------------------------------------------------------------------
 // Tiny markdown -> HTML converter. Deliberately not general-purpose —
@@ -209,6 +212,76 @@ function parsePage(md) {
   return { title: title, leadHtml: leadHtml, sections: sections };
 }
 
+/**
+ * Blog posts (docs/backlog/adr-blog.md §1): flat `---`-delimited
+ * frontmatter, not a full YAML parser — 5 flat key:value fields never
+ * need real nesting, and a hand-rolled parser matches this project's
+ * existing zero-dependency stance (adr-docs-site.md §2).
+ */
+function parseFrontmatter(raw) {
+  const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) {
+    throw new Error('Blog post is missing its --- frontmatter block');
+  }
+  const meta = {};
+  match[1].split('\n').forEach(function (line) {
+    const idx = line.indexOf(':');
+    if (idx === -1) return;
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    // Optional surrounding quotes (needed when a value itself contains a
+    // ":", e.g. a title with a subtitle) — stripped, not preserved.
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    meta[key] = value;
+  });
+  meta.tags = (meta.tags || '')
+    .split(',')
+    .map(function (t) { return t.trim(); })
+    .filter(Boolean);
+  const body = raw.slice(match[0].length);
+  return { meta: meta, body: body };
+}
+
+function readingTime(bodyMd) {
+  const words = bodyMd.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / 200));
+}
+
+function formatDate(iso) {
+  const parts = iso.split('-').map(Number);
+  const y = parts[0], m = parts[1], d = parts[2];
+  return MONTHS[m - 1] + ' ' + d + ', ' + y;
+}
+
+function loadBlogPosts() {
+  if (!fs.existsSync(CONTENT_DIR_BLOG)) return [];
+  const files = fs.readdirSync(CONTENT_DIR_BLOG).filter(function (f) { return f.endsWith('.md'); });
+  const posts = files.map(function (file) {
+    const raw = fs.readFileSync(path.join(CONTENT_DIR_BLOG, file), 'utf8');
+    const { meta, body } = parseFrontmatter(raw);
+    const slug = file.replace(/\.md$/, '');
+    const requiredFields = ['title', 'date', 'excerpt'];
+    requiredFields.forEach(function (field) {
+      if (!meta[field]) throw new Error('Blog post "' + file + '" is missing required frontmatter field: ' + field);
+    });
+    return {
+      slug: slug,
+      title: meta.title,
+      date: meta.date,
+      excerpt: meta.excerpt,
+      tags: meta.tags,
+      bodyMd: body,
+      bodyHtml: renderBlocks(body),
+      readTime: readingTime(body),
+    };
+  });
+  // newest first — directory scan order is filesystem-dependent, sort explicitly
+  posts.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+  return posts;
+}
+
 // ---------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------
@@ -220,7 +293,7 @@ function parsePage(md) {
 // matching the string's start would silently no-op, which is exactly the
 // bug this comment is here to prevent regressing.
 function withBase(html) {
-  return html.replace(/(href|src)="\/(docs|assets)\//g, function (_m, attr, seg) {
+  return html.replace(/(href|src)="\/(docs|assets|blog)\//g, function (_m, attr, seg) {
     return attr + '="' + BASE_PATH + seg + '/';
   });
 }
@@ -231,6 +304,14 @@ function asset(p) {
 
 function docUrl(slug) {
   return BASE_PATH + 'docs/' + slug + '.html';
+}
+
+function blogListUrl() {
+  return BASE_PATH + 'blog/';
+}
+
+function blogUrl(slug) {
+  return BASE_PATH + 'blog/' + slug + '.html';
 }
 
 function baseHead(title, description) {
@@ -254,7 +335,14 @@ function baseHead(title, description) {
   );
 }
 
-function navHtml(activeSlug) {
+function navHtml(section) {
+  // section: 'docs' | 'blog' | undefined — controls the nav-right active
+  // state only (docs.yml sidebar's own active state is separate, see
+  // sidebarHtml()). Kept as a distinct param from the docs sidebar's
+  // activeSlug per adr-blog.md §6: blog is a peer nav section, not part
+  // of the docs tree.
+  const docsClass = section === 'docs' ? ' class="active"' : '';
+  const blogClass = section === 'blog' ? ' class="active"' : '';
   return (
     '<nav class="site-nav">' +
     '<div class="nav-left">' +
@@ -266,7 +354,8 @@ function navHtml(activeSlug) {
     '</div>' +
     '<button class="nav-search" type="button" aria-haspopup="dialog"><span class="visually-hidden">Search docs</span><span aria-hidden="true">Search docs…</span><kbd>⌘K</kbd></button>' +
     '<div class="nav-right">' +
-    '<a href="' + BASE_PATH + 'docs/quick-start.html">Docs</a>' +
+    '<a' + docsClass + ' href="' + BASE_PATH + 'docs/quick-start.html">Docs</a>' +
+    '<a' + blogClass + ' href="' + blogListUrl() + '">Blog</a>' +
     '<a class="nav-github" href="https://github.com/imchintoo/rbac-fs">GitHub</a>' +
     '<a href="https://www.npmjs.com/package/rbac-fs">npm</a>' +
     '</div>' +
@@ -334,7 +423,7 @@ function docsPageHtml(page, groupLabel, nav, activeSlug, nextItem) {
     .join('\n');
 
   const body =
-    navHtml(activeSlug) +
+    navHtml('docs') +
     '<div class="docs-shell">' +
     sidebarHtml(nav, activeSlug) +
     '<main class="docs-content">' +
@@ -364,9 +453,19 @@ function docsPageHtml(page, groupLabel, nav, activeSlug, nextItem) {
   return withBase(html);
 }
 
+function footerHtml() {
+  return (
+    '<footer class="site-footer"><span>MIT License · rbac-fs</span><span><a href="' +
+    docUrl('quick-start') +
+    '">Docs</a> · <a href="' +
+    blogListUrl() +
+    '">Blog</a> · <a href="https://github.com/imchintoo/rbac-fs">GitHub</a> · <a href="https://www.npmjs.com/package/rbac-fs">npm</a></span></footer>'
+  );
+}
+
 function landingPageHtml() {
   const nav =
-    navHtml(null);
+    navHtml();
 
   const hero =
     '<section class="hero">' +
@@ -430,10 +529,7 @@ function landingPageHtml() {
       .join('') +
     '</div></section>';
 
-  const footer =
-    '<footer class="site-footer"><span>MIT License · rbac-fs</span><span><a href="' +
-    docUrl('quick-start') +
-    '">Docs</a> · <a href="https://github.com/imchintoo/rbac-fs">GitHub</a> · <a href="https://www.npmjs.com/package/rbac-fs">npm</a></span></footer>';
+  const footer = footerHtml();
 
   const html =
     '<!doctype html><html lang="en"><head>' +
@@ -451,6 +547,178 @@ function landingPageHtml() {
     '"></script></body></html>';
 
   return withBase(html);
+}
+
+// ---------------------------------------------------------------------
+// Blog templates (docs/backlog/adr-blog.md, design-spec-blog.md)
+// ---------------------------------------------------------------------
+
+function tagPillsHtml(tags) {
+  return '<div class="tag-row">' + tags.map(function (t) { return '<span class="tag-pill">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
+}
+
+function blogListPageHtml(posts) {
+  const rows = posts
+    .map(function (post, idx) {
+      return (
+        '<a class="post-row' +
+        (idx === 0 ? ' first' : '') +
+        '" href="' +
+        blogUrl(post.slug) +
+        '">' +
+        '<p class="post-meta">' +
+        formatDate(post.date) +
+        ' &middot; ' +
+        post.readTime +
+        ' min read</p>' +
+        '<h2 class="post-title">' +
+        escapeHtml(post.title) +
+        '</h2>' +
+        '<p class="post-excerpt">' +
+        escapeHtml(post.excerpt) +
+        '</p>' +
+        tagPillsHtml(post.tags) +
+        '</a>'
+      );
+    })
+    .join('');
+
+  const body =
+    navHtml('blog') +
+    '<header class="blog-header">' +
+    '<p class="eyebrow">Notes on RBAC, architecture, and transparency</p>' +
+    '<h1>Blog</h1>' +
+    '</header>' +
+    '<div class="post-list-wrap"><div class="post-list">' +
+    rows +
+    '</div></div>' +
+    footerHtml();
+
+  const html =
+    '<!doctype html><html lang="en"><head>' +
+    baseHead('Blog', 'Notes on file-based RBAC, multi-tenant architecture, and building rbac-fs in the open.') +
+    '<link rel="canonical" href="' + SITE_ORIGIN + blogListUrl() + '">' +
+    '<link rel="alternate" type="application/rss+xml" title="rbac-fs Blog" href="' + SITE_ORIGIN + BASE_PATH + 'blog/rss.xml">' +
+    '</head><body data-base="' +
+    BASE_PATH +
+    '">' +
+    body +
+    '<script src="' +
+    asset('site.js') +
+    '"></script></body></html>';
+
+  return withBase(html);
+}
+
+function jsonLdScript(post, url) {
+  const data = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    datePublished: post.date,
+    dateModified: post.date,
+    author: { '@type': 'Person', name: 'Chintan Goswami' },
+    publisher: { '@type': 'Organization', name: 'rbac-fs' },
+    description: post.excerpt,
+    mainEntityOfPage: url,
+  };
+  // Escape "<" so a stray "</script>"-like substring in any field can
+  // never break out of the script tag (defense in depth — current
+  // content is all hand-authored/trusted, but this is free to get right).
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  return '<script type="application/ld+json">' + json + '</script>';
+}
+
+function blogDetailPageHtml(post, allPosts) {
+  const url = SITE_ORIGIN + blogUrl(post.slug);
+  const related = allPosts.filter(function (p) { return p.slug !== post.slug; }).slice(0, 2);
+
+  const relatedHtml = related.length
+    ? '<section class="related-band"><p class="related-label-band">Keep reading</p><div class="related-grid">' +
+      related
+        .map(function (p) {
+          return (
+            '<a class="related-card" href="' +
+            blogUrl(p.slug) +
+            '"><span class="related-card-date">' +
+            formatDate(p.date) +
+            '</span><strong>' +
+            escapeHtml(p.title) +
+            '</strong></a>'
+          );
+        })
+        .join('') +
+      '</div></section>'
+    : '';
+
+  const article =
+    '<article class="article">' +
+    '<p class="breadcrumb"><a href="' + blogListUrl() + '">Blog</a> / ' + escapeHtml(post.title) + '</p>' +
+    tagPillsHtml(post.tags) +
+    '<h1>' + escapeHtml(post.title) + '</h1>' +
+    '<div class="byline">' +
+    '<span class="avatar" aria-hidden="true"></span>' +
+    '<span class="byline-name">Chintan Goswami</span>' +
+    '<span class="byline-dot">&middot;</span>' +
+    '<time class="byline-date" datetime="' + post.date + '">' + formatDate(post.date) + '</time>' +
+    '<span class="byline-dot">&middot;</span>' +
+    '<span>' + post.readTime + ' min read</span>' +
+    '</div>' +
+    post.bodyHtml +
+    '</article>';
+
+  const body = navHtml('blog') + '<div class="article-wrap">' + article + '</div>' + relatedHtml + footerHtml();
+
+  const html =
+    '<!doctype html><html lang="en"><head>' +
+    baseHead(post.title, post.excerpt) +
+    '<link rel="canonical" href="' + url + '">' +
+    '<meta property="og:title" content="' + escapeHtml(post.title) + '">' +
+    '<meta property="og:description" content="' + escapeHtml(post.excerpt) + '">' +
+    '<meta property="og:type" content="article">' +
+    '<meta property="og:url" content="' + url + '">' +
+    '<meta property="og:site_name" content="rbac-fs">' +
+    '<meta property="article:published_time" content="' + post.date + '">' +
+    '<meta name="twitter:card" content="summary">' +
+    '<meta name="twitter:title" content="' + escapeHtml(post.title) + '">' +
+    '<meta name="twitter:description" content="' + escapeHtml(post.excerpt) + '">' +
+    jsonLdScript(post, url) +
+    '</head><body data-base="' +
+    BASE_PATH +
+    '">' +
+    body +
+    '<script src="' +
+    asset('site.js') +
+    '"></script></body></html>';
+
+  return withBase(html);
+}
+
+function blogRss(posts) {
+  const items = posts
+    .map(function (post) {
+      const url = SITE_ORIGIN + blogUrl(post.slug);
+      return (
+        '<item>' +
+        '<title>' + escapeHtml(post.title) + '</title>' +
+        '<link>' + url + '</link>' +
+        '<guid>' + url + '</guid>' +
+        '<pubDate>' + new Date(post.date + 'T00:00:00Z').toUTCString() + '</pubDate>' +
+        '<description>' + escapeHtml(post.excerpt) + '</description>' +
+        '</item>'
+      );
+    })
+    .join('');
+
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<rss version="2.0"><channel>' +
+    '<title>rbac-fs Blog</title>' +
+    '<link>' + SITE_ORIGIN + blogListUrl() + '</link>' +
+    '<description>Notes on file-based RBAC, multi-tenant architecture, and building rbac-fs in the open.</description>' +
+    items +
+    '</channel></rss>\n'
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -482,6 +750,7 @@ function main() {
   }
   fs.mkdirSync(path.join(OUT_DIR, 'docs'), { recursive: true });
   fs.mkdirSync(path.join(OUT_DIR, 'docs', 'adapters'), { recursive: true });
+  fs.mkdirSync(path.join(OUT_DIR, 'blog'), { recursive: true });
   fs.mkdirSync(path.join(OUT_DIR, 'assets'), { recursive: true });
 
   const searchIndex = [];
@@ -504,6 +773,21 @@ function main() {
     });
   });
 
+  // ---- Blog ----
+  const posts = loadBlogPosts();
+  posts.forEach(function (post) {
+    const html = blogDetailPageHtml(post, posts);
+    fs.writeFileSync(path.join(OUT_DIR, 'blog', post.slug + '.html'), html);
+    searchIndex.push({
+      title: post.title,
+      url: blogUrl(post.slug),
+      excerpt: post.excerpt,
+      headings: [],
+    });
+  });
+  fs.writeFileSync(path.join(OUT_DIR, 'blog', 'index.html'), blogListPageHtml(posts));
+  fs.writeFileSync(path.join(OUT_DIR, 'blog', 'rss.xml'), blogRss(posts));
+
   fs.writeFileSync(path.join(OUT_DIR, 'index.html'), landingPageHtml());
   fs.writeFileSync(path.join(OUT_DIR, 'search-index.json'), JSON.stringify(searchIndex, null, 2));
 
@@ -511,15 +795,19 @@ function main() {
     fs.copyFileSync(path.join(THEME_DIR, f), path.join(OUT_DIR, 'assets', f));
   });
 
-  const urls = [BASE_PATH].concat(flat.map(function (item) { return docUrl(item.slug); }));
+  const urls = [BASE_PATH, blogListUrl()]
+    .concat(flat.map(function (item) { return docUrl(item.slug); }))
+    .concat(posts.map(function (post) { return blogUrl(post.slug); }));
   const sitemap =
     '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-    urls.map(function (u) { return '  <url><loc>https://imchintoo.github.io' + u + '</loc></url>'; }).join('\n') +
+    urls.map(function (u) { return '  <url><loc>' + SITE_ORIGIN + u + '</loc></url>'; }).join('\n') +
     '\n</urlset>\n';
   fs.writeFileSync(path.join(OUT_DIR, 'sitemap.xml'), sitemap);
-  fs.writeFileSync(path.join(OUT_DIR, 'robots.txt'), 'User-agent: *\nAllow: /\nSitemap: https://imchintoo.github.io' + BASE_PATH + 'sitemap.xml\n');
+  fs.writeFileSync(path.join(OUT_DIR, 'robots.txt'), 'User-agent: *\nAllow: /\nSitemap: ' + SITE_ORIGIN + BASE_PATH + 'sitemap.xml\n');
 
-  console.log('Built ' + flat.length + ' doc pages + landing page -> ' + path.relative(ROOT, OUT_DIR) + '/');
+  console.log(
+    'Built ' + flat.length + ' doc pages + ' + posts.length + ' blog posts + landing/blog-list -> ' + path.relative(ROOT, OUT_DIR) + '/'
+  );
 }
 
 main();
